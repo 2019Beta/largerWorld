@@ -11,6 +11,8 @@ import org.devt.largerworld.coordinate.VirtualPosition;
 import java.util.Locale;
 
 public class LargerworldClient implements ClientModInitializer {
+    private static final int PRIMARY_TEXT_COLOR = 0xFFFFFFFF;
+    private static final int SECONDARY_TEXT_COLOR = 0xFFA0FFA0;
 
     @Override
     public void onInitializeClient() {
@@ -32,8 +34,8 @@ public class LargerworldClient implements ClientModInitializer {
 
                     if (client.getDebugHud().shouldShowDebugHud()) {
                         int y = context.getScaledWindowHeight() - 22;
-                        context.drawTextWithShadow(client.textRenderer, global, 2, y, 0xFFFFFF);
-                        context.drawTextWithShadow(client.textRenderer, local, 2, y + 10, 0xA0FFA0);
+                        context.drawTextWithShadow(client.textRenderer, global, 2, y, PRIMARY_TEXT_COLOR);
+                        context.drawTextWithShadow(client.textRenderer, local, 2, y + 10, SECONDARY_TEXT_COLOR);
                         return;
                     }
 
@@ -43,8 +45,10 @@ public class LargerworldClient implements ClientModInitializer {
                             client.textRenderer.getWidth(global),
                             client.textRenderer.getWidth(local)) + 8;
                     context.fill(panelX, panelY, panelX + panelWidth, panelY + 25, 0x90000000);
-                    context.drawTextWithShadow(client.textRenderer, global, panelX + 4, panelY + 3, 0xFFFFFF);
-                    context.drawTextWithShadow(client.textRenderer, local, panelX + 4, panelY + 13, 0xA0FFA0);
+                    context.drawTextWithShadow(
+                            client.textRenderer, global, panelX + 4, panelY + 3, PRIMARY_TEXT_COLOR);
+                    context.drawTextWithShadow(
+                            client.textRenderer, local, panelX + 4, panelY + 13, SECONDARY_TEXT_COLOR);
                 });
     }
 }

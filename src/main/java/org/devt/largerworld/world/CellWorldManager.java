@@ -56,7 +56,8 @@ public final class CellWorldManager {
         ServerWorldProperties properties = new CellWorldProperties(new UnmodifiableLevelProperties(
                 server.getSaveProperties(), server.getSaveProperties().getMainWorldProperties()));
         DimensionOptions options = new DimensionOptions(
-                baseWorld.getDimensionEntry(), baseWorld.getChunkManager().getChunkGenerator());
+                baseWorld.getDimensionEntry(),
+                new CellChunkGenerator(baseWorld.getChunkManager().getChunkGenerator(), parsed.cell()));
 
         // Only the canonical base world advances shared time. Cell worlds still
         // receive the resulting time/weather through UnmodifiableLevelProperties.

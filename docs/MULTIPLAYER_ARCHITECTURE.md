@@ -25,9 +25,14 @@ keys are reversible, allowing player NBT that references a cell world to load it
 again after a restart. Empty cell worlds save and unload after 60 seconds.
 
 Every cell uses the original save seed. No cell-specific seed derivation is
-performed. Since generation still receives canonical local chunk coordinates,
-equal local coordinates in previously ungenerated cells produce the same terrain;
-continuous cross-cell terrain requires the separate global worldgen-offset layer.
+performed. Non-zero cell worlds wrap the original generator with a coordinate
+view: generation sees `localChunk + cell * 65536`, while RegionFile storage and
+network identity remain cell-local. Noise, biome and surface sampling therefore
+continue across cell boundaries instead of restarting at the opposite local edge.
+
+This only affects chunks generated after the offset layer is installed. Existing
+cell RegionFiles retain their old terrain and must not be mixed with regenerated
+border chunks when checking continuity.
 
 Players, mobs, items, projectiles and complete vehicle/passenger graphs migrate as
 one unit. Portals that temporarily place a player in a canonical base dimension are
