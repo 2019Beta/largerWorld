@@ -18,7 +18,6 @@ import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ChunkRegion.class)
@@ -49,19 +48,4 @@ public abstract class ChunkRegionMixin {
                 .split(globalPos.getStartPos());
     }
 
-    @Redirect(
-            method = "getChunk(IILnet/minecraft/world/chunk/ChunkStatus;Z)Lnet/minecraft/world/chunk/Chunk;",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lnet/minecraft/util/collection/BoundedRegionArray;get(II)Ljava/lang/Object;"))
-    private Object largerworld$getCellLocalChunk(BoundedRegionArray<?> chunks, int chunkX, int chunkZ) {
-        if (!WorldgenCoordinates.isShifted(centerPos)) {
-            return chunks.get(chunkX, chunkZ);
-        }
-
-        CellPos cell = CellWorldKey.cell(world.getRegistryKey());
-        return chunks.get(
-                WorldgenCoordinates.toLocalChunkX(cell, chunkX),
-                WorldgenCoordinates.toLocalChunkZ(cell, chunkZ));
-    }
 }

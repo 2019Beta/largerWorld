@@ -25,10 +25,17 @@ keys are reversible, allowing player NBT that references a cell world to load it
 again after a restart. Empty cell worlds save and unload after 60 seconds.
 
 Every cell uses the original save seed. No cell-specific seed derivation is
-performed. Non-zero cell worlds wrap the original generator with a coordinate
-view: generation sees `localChunk + cell * 65536`, while RegionFile storage and
-network identity remain cell-local. Noise, biome and surface sampling therefore
-continue across cell boundaries instead of restarting at the opposite local edge.
+performed. Non-zero cell worlds keep their `ChunkPos`, structures, block entities,
+RegionFiles and network identity cell-local. Only horizontal noise interpolation,
+aquifer sampling, surface-height queries and biome quart coordinates are evaluated
+at `local + cell * 1048576`. This narrow sampling offset prevents global positions
+from leaking into chunk storage while keeping base terrain continuous. Carvers
+translate their temporary aquifer query position at the call boundary, then still
+write caves and post-processing markers with cell-local block positions. Carver
+seeds, structure placement checks, structure-layout seeds and decoration seeds use
+the corresponding global chunk or block coordinates. Vanilla's generation halo
+can therefore reproduce the same translated cave or structure start on both sides
+of a cell seam while all persisted positions remain cell-local.
 
 This only affects chunks generated after the offset layer is installed. Existing
 cell RegionFiles retain their old terrain and must not be mixed with regenerated

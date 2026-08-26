@@ -7,6 +7,8 @@ import net.minecraft.world.WanderingTraderManager;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.source.BiomeAccess;
 import net.minecraft.world.dimension.DimensionOptions;
+import net.minecraft.world.gen.chunk.ChunkGenerator;
+import net.minecraft.world.gen.chunk.NoiseChunkGenerator;
 import net.minecraft.world.level.ServerWorldProperties;
 import net.minecraft.world.level.UnmodifiableLevelProperties;
 import net.minecraft.world.spawner.CatSpawner;
@@ -57,7 +59,7 @@ public final class CellWorldManager {
                 server.getSaveProperties(), server.getSaveProperties().getMainWorldProperties()));
         DimensionOptions options = new DimensionOptions(
                 baseWorld.getDimensionEntry(),
-                new CellChunkGenerator(baseWorld.getChunkManager().getChunkGenerator(), parsed.cell()));
+                createGenerator(baseWorld.getChunkManager().getChunkGenerator(), parsed.cell()));
 
         // Only the canonical base world advances shared time. Cell worlds still
         // receive the resulting time/weather through UnmodifiableLevelProperties.
@@ -74,6 +76,7 @@ public final class CellWorldManager {
                 false,
                 baseWorld.getRandomSequences());
 
+        WorldgenCoordinates.register(created.getChunkManager().getNoiseConfig(), parsed.cell());
         created.getWorldBorder().setMaxRadius(server.getMaxWorldBorderRadius());
         worlds.put(requestedKey, created);
         Largerworld.LOGGER.info("Loaded coordinate cell {} {} for base dimension {}",
@@ -124,5 +127,14 @@ public final class CellWorldManager {
                 new CatSpawner(),
                 new ZombieSiegeManager(),
                 new WanderingTraderManager(properties));
+    }
+
+    private static ChunkGenerator createGenerator(ChunkGenerator baseGenerator, CellPos cell) {
+        if (baseGenerator instanceof NoiseChunkGenerator noiseGenerator) {
+            return new NoiseChunkGenerator(
+                    new CellBiomeSource(noiseGenerator.getBiomeSource(), cell),
+                    noiseGenerator.getSettings());
+        }
+        return baseGenerator;
     }
 }

@@ -4,11 +4,15 @@
   "package": "org.devt.largerworld.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "ChunkGeneratorAccessor",
-    "ChunkMixin",
+    "BiomeSourceAccessor",
+    "CarverMixin",
+    "ChunkGeneratorMixin",
+    "ChunkNoiseSamplerMixin",
     "ChunkRegionMixin",
     "MinecraftServerAccessor",
-    "MinecraftServerMixin"
+    "MinecraftServerMixin",
+    "NoiseChunkGeneratorMixin",
+    "StructureContextMixin"
   ],
   "injectors": {
     "defaultRequire": 1

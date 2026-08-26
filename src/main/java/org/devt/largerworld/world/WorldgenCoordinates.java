@@ -2,53 +2,57 @@ package org.devt.largerworld.world;
 
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.gen.chunk.ChunkGenerator;
+import net.minecraft.world.gen.noise.NoiseConfig;
+import net.minecraft.world.gen.chunk.ChunkNoiseSampler;
+import net.minecraft.world.gen.chunk.AquiferSampler;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.WeakHashMap;
 
-/** Temporary coordinate view used while vanilla generates a cell chunk. */
+/** Coordinate offsets associated with each cell world's private noise config. */
 public final class WorldgenCoordinates {
     public static final int CELL_SIZE_CHUNKS = (int) (VirtualPosition.CELL_SIZE / 16L);
 
-    private static final Map<Chunk, ActiveShift> ACTIVE_CHUNKS = new IdentityHashMap<>();
+    private static final Map<NoiseConfig, CellPos> NOISE_CONFIG_CELLS = new IdentityHashMap<>();
+    private static final Map<ChunkNoiseSampler, CellPos> SAMPLER_CELLS = new WeakHashMap<>();
+    private static final Map<AquiferSampler, CellPos> AQUIFER_CELLS = new WeakHashMap<>();
 
     private WorldgenCoordinates() {
     }
 
-    public static synchronized void begin(Chunk chunk, CellPos cell) {
-        ActiveShift active = ACTIVE_CHUNKS.get(chunk);
-        if (active == null) {
-            ACTIVE_CHUNKS.put(chunk, new ActiveShift(cell, 1));
-            return;
-        }
-        if (!active.cell().equals(cell)) {
-            throw new IllegalStateException("Chunk is already being generated for another coordinate cell");
-        }
-        ACTIVE_CHUNKS.put(chunk, new ActiveShift(cell, active.references() + 1));
+    public static synchronized void register(NoiseConfig noiseConfig, CellPos cell) {
+        NOISE_CONFIG_CELLS.put(noiseConfig, cell);
     }
 
-    public static synchronized void end(Chunk chunk) {
-        ActiveShift active = ACTIVE_CHUNKS.get(chunk);
-        if (active == null) {
-            throw new IllegalStateException("World-generation coordinate shift is not active");
-        }
-        if (active.references() == 1) {
-            ACTIVE_CHUNKS.remove(chunk);
-        } else {
-            ACTIVE_CHUNKS.put(chunk, new ActiveShift(active.cell(), active.references() - 1));
-        }
+    public static synchronized CellPos cell(NoiseConfig noiseConfig) {
+        return NOISE_CONFIG_CELLS.getOrDefault(noiseConfig, CellPos.ZERO);
     }
 
-    public static synchronized boolean isShifted(Chunk chunk) {
-        return ACTIVE_CHUNKS.containsKey(chunk);
+    public static synchronized void register(ChunkNoiseSampler sampler, CellPos cell) {
+        SAMPLER_CELLS.put(sampler, cell);
     }
 
-    public static synchronized ChunkPos shiftedPos(Chunk chunk, ChunkPos localPos) {
-        ActiveShift active = ACTIVE_CHUNKS.get(chunk);
-        return active == null ? localPos : toGlobalChunk(active.cell(), localPos);
+    public static synchronized CellPos cell(ChunkNoiseSampler sampler) {
+        return SAMPLER_CELLS.getOrDefault(sampler, CellPos.ZERO);
+    }
+
+    public static synchronized void register(AquiferSampler sampler, CellPos cell) {
+        AQUIFER_CELLS.put(sampler, cell);
+    }
+
+    public static synchronized CellPos cell(AquiferSampler sampler) {
+        return AQUIFER_CELLS.getOrDefault(sampler, CellPos.ZERO);
+    }
+
+    public static CellPos cell(ChunkGenerator generator) {
+        if (generator.getBiomeSource() instanceof CellBiomeSource source) {
+            return source.cell();
+        }
+        return CellPos.ZERO;
     }
 
     public static ChunkPos toGlobalChunk(CellPos cell, ChunkPos localPos) {
@@ -103,6 +107,4 @@ public final class WorldgenCoordinates {
         return Math.toIntExact(Math.subtractExact((long) value, offset));
     }
 
-    private record ActiveShift(CellPos cell, int references) {
-    }
 }
