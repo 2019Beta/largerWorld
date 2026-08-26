@@ -2,11 +2,14 @@ package org.devt.largerworld.client;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
+import org.devt.largerworld.client.network.ClientCellPacketContext;
+import org.devt.largerworld.network.CellPacketPayload;
 
 import java.util.Locale;
 
@@ -16,6 +19,8 @@ public class LargerworldClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        ClientPlayNetworking.registerGlobalReceiver(CellPacketPayload.ID,
+                (payload, context) -> ClientCellPacketContext.apply(payload, context.client().getNetworkHandler()));
         HudElementRegistry.addLast(
                 Identifier.of(Largerworld.MOD_ID, "global_coordinates"),
                 (context, tickCounter) -> {
@@ -26,7 +31,8 @@ public class LargerworldClient implements ClientModInitializer {
 
                     CellPos cell = client.player.getAttachedOrCreate(Largerworld.CELL_POS);
                     VirtualPosition position = VirtualPosition.normalize(
-                            cell, client.player.getX(), client.player.getY(), client.player.getZ());
+                            ClientCellPacketContext.connectionOrigin(cell),
+                            client.player.getX(), client.player.getY(), client.player.getZ());
                     String global = "实际 XYZ: " + position.globalX(3) + " / "
                             + String.format(Locale.ROOT, "%.3f", position.y()) + " / " + position.globalZ(3);
                     String local = "Cell: [" + cell.x() + ", " + cell.z() + "]  Local XZ: "

@@ -19,6 +19,7 @@ import net.minecraft.village.ZombieSiegeManager;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.mixin.MinecraftServerAccessor;
+import org.devt.largerworld.server.CellViewTracker;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -94,7 +95,7 @@ public final class CellWorldManager {
             if (CellWorldKey.parse(key).isEmpty()) {
                 continue;
             }
-            if (!world.getPlayers().isEmpty()) {
+            if (!world.getPlayers().isEmpty() || CellViewTracker.isWorldWatched(world)) {
                 idle.remove(key);
                 continue;
             }

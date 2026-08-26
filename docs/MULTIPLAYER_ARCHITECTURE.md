@@ -5,10 +5,10 @@
 1. Minecraft block/entity physics only receives local X/Z in `[-524288, 524288)`.
 2. A server-side chunk is identified by `(baseDimension, cellX, cellZ, localChunkX, localChunkZ)`.
 3. Each cell has its own `ServerWorld`, chunk cache, RegionFile, entity and POI storage.
-4. A client sees ordinary integer chunk coordinates relative to its current cell.
+4. A client sees ordinary integer chunk coordinates relative to a stable per-connection origin cell.
 5. The owning server remains authoritative for all global/cell conversions.
 
-## Implemented storage/runtime layer
+## Storage and runtime
 
 ```text
 base dimension + CellPos
@@ -22,20 +22,17 @@ dimensions/largerworld/cell/.../{region,entities,poi}
 
 Cell worlds are created on the server thread when first requested. Their registry
 keys are reversible, allowing player NBT that references a cell world to load it
-again after a restart. Empty cell worlds save and unload after 60 seconds.
+again after a restart. Empty and unwatched cell worlds save and unload after 60
+seconds. Shadow-view tickets prevent a visible neighbor from being evicted.
 
 Every cell uses the original save seed. No cell-specific seed derivation is
 performed. Non-zero cell worlds keep their `ChunkPos`, structures, block entities,
 RegionFiles and network identity cell-local. Only horizontal noise interpolation,
 aquifer sampling, surface-height queries and biome quart coordinates are evaluated
-at `local + cell * 1048576`. This narrow sampling offset prevents global positions
-from leaking into chunk storage while keeping base terrain continuous. Carvers
-translate their temporary aquifer query position at the call boundary, then still
-write caves and post-processing markers with cell-local block positions. Carver
-seeds, structure placement checks, structure-layout seeds and decoration seeds use
-the corresponding global chunk or block coordinates. Vanilla's generation halo
-can therefore reproduce the same translated cave or structure start on both sides
-of a cell seam while all persisted positions remain cell-local.
+at `local + cell * 1048576`. Carver seeds, structure placement checks,
+structure-layout seeds and decoration seeds use the corresponding global chunk or
+block coordinates, so newly generated terrain continues across a seam while all
+persisted positions remain cell-local.
 
 This only affects chunks generated after the offset layer is installed. Existing
 cell RegionFiles retain their old terrain and must not be mixed with regenerated
@@ -45,34 +42,65 @@ Players, mobs, items, projectiles and complete vehicle/passenger graphs migrate 
 one unit. Portals that temporarily place a player in a canonical base dimension are
 reconciled back to the same cell on the following server tick.
 
-## Client view mapping
+## Seamless client view mapping
 
-One cell contains 65536 chunks per axis. For a chunk from `sourceCell`, the client
-coordinate relative to `playerCell` is:
+One cell contains 65536 chunks per axis. The server records the player's cell at
+login as `originCell`. For a chunk from `sourceCell`, the client coordinate is:
 
 ```text
-clientChunk = localChunk + (sourceCell - playerCell) * 65536
+clientChunk = localChunk + (sourceCell - originCell) * 65536
 ```
 
-The inverse uses floor division, including for negative coordinates. This mapping
-is implemented by `VirtualChunkPos` and is the contract for packet translation.
+The inverse uses floor division, including for negative coordinates. Keeping the
+origin fixed means a cell crossing does not move existing client chunks or
+entities. It also leaves the client world and renderer intact.
 
-## Remaining seamless-network layer
+Every vanilla play packet is carried inside `largerworld:cell_packet` with its
+`sourceCell` and the connection's `originCell`. This follows the source-context
+packet-redirection pattern used by Immersive Portals, specialized for a single
+stitched cell plane. Client mixins translate coordinate-bearing accessors only
+while the enclosed vanilla packet is applied.
 
-Independent multiplayer storage is not by itself visual stitching. To render and
-interact across a boundary without a dimension reload, the following packet groups
-must all use `VirtualChunkPos` consistently:
+## Shadow tracking and updates
+
+For each player, the server computes the portion of the vanilla view circle that
+falls outside the current cell. Those neighbor chunks receive loading and
+simulation tickets, then their full chunk/light data and entity tracker listeners
+are attached to the same connection. Ownership is handed between shadow tracking
+and vanilla tracking when the player crosses a seam, without unloading the client
+chunk during that handoff.
+
+The translated packet groups include:
 
 - full chunk, light, biome and unload packets;
 - block and section delta packets;
 - block entities, sounds, particles, explosions and world events;
-- entity spawn/movement/tracking packets;
-- inbound digging, use-block, movement and command coordinates.
+- entity spawn, movement and tracking packets;
+- spawn, look-at and world-border coordinates;
+- inbound digging, use-block, entity interaction, player movement and vehicle movement.
 
-Neighbor cell chunks also need per-player shadow tracking because vanilla only
-tracks chunks in the player's current `ServerWorld`. Sending only an initial chunk
-packet is insufficient: later block/entity changes would silently desynchronize.
+Sounds and world events sent through `PlayerManager.sendToAround`, plus particles
+and block-breaking progress emitted directly by `ServerWorld`, are copied to
+nearby shadow viewers using global cell distance. Shadow block/light changes
+currently resend the affected full chunk, favoring correctness over bandwidth.
 
-Until that layer is installed, crossing a cell uses a real `ServerWorld` transfer.
-This provides independent saves and concurrent multiplayer cells, but the client
-will rebuild its chunk cache at the seam.
+## Seam crossing and inbound routing
+
+When a player crosses the canonical local boundary, the server moves the player
+to the target `ServerWorld` without sending `PlayerRespawnS2CPacket`. The normal
+position-correction packet is tagged with the target cell, so it resolves to the
+same continuous client coordinate. Server movement packets are converted from the
+stable client origin back into the player's current local cell.
+
+Digging, block use and entity interaction first resolve their client coordinate or
+tracked entity against the visible neighbor cell. If the target is remote, the
+player and interaction manager are temporarily projected into that `ServerWorld`
+while vanilla handles the operation. This preserves vanilla reach, permission,
+sequence and screen-distance checks instead of duplicating them.
+
+## Current limits
+
+The stable origin is not rebased during a connection. After roughly 28 cell
+crossings in one direction, client coordinates approach vanilla's approximately
+30-million-block safety range; reconnecting selects a fresh origin. Async editors
+such as a sign opened across a seam before crossing are not yet remotely routed.

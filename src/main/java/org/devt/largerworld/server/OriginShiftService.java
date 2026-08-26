@@ -26,7 +26,6 @@ public final class OriginShiftService {
     }
 
     public static void tick(MinecraftServer server) {
-        reconcilePlayerWorlds(server);
         if (server.getTicks() % 20 == 0) {
             preloadApproachingCells(server);
         }
@@ -90,7 +89,7 @@ public final class OriginShiftService {
         target.getChunkManager().addTicket(ChunkTicketType.PORTAL, entryChunk, 3);
     }
 
-    private static void reconcilePlayerWorlds(MinecraftServer server) {
+    public static void reconcilePlayerWorlds(MinecraftServer server) {
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
             ServerWorld currentWorld = player.getEntityWorld();
             CellPos worldCell = CellWorldKey.cell(currentWorld.getRegistryKey());

@@ -8,7 +8,10 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.util.Identifier;
 import org.devt.largerworld.command.LargerWorldCommands;
 import org.devt.largerworld.coordinate.CellPos;
+import org.devt.largerworld.network.CellPacketPayload;
 import org.devt.largerworld.server.OriginShiftService;
+import org.devt.largerworld.server.CellViewTracker;
+import org.devt.largerworld.server.CellChunkTickets;
 import org.devt.largerworld.world.CellWorldManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,9 +34,13 @@ public class Largerworld implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        CellPacketPayload.register();
+        CellChunkTickets.register();
         LargerWorldCommands.register();
+        ServerTickEvents.START_SERVER_TICK.register(OriginShiftService::reconcilePlayerWorlds);
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             OriginShiftService.tick(server);
+            CellViewTracker.tick(server);
             CellWorldManager.tickEviction(server);
         });
     }

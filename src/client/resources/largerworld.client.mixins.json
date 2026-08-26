@@ -4,6 +4,22 @@
   "package": "org.devt.largerworld.mixin.client",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "BlockPositionPacketMixin",
+    "ChunkBiomeDataPacketMixin",
+    "ChunkCenterPacketMixin",
+    "ChunkDataPacketMixin",
+    "ChunkDeltaPacketMixin",
+    "DoublePositionPacketMixin",
+    "EntityPositionPacketMixin",
+    "EntityPositionSyncPacketMixin",
+    "ExplosionPacketMixin",
+    "LightUpdatePacketMixin",
+    "LookAtPacketMixin",
+    "PlayerPositionPacketMixin",
+    "PlayerSpawnPositionPacketMixin",
+    "UnloadChunkPacketMixin",
+    "VehicleMovePacketMixin",
+    "WorldBorderPacketMixin"
   ],
   "injectors": {
     "defaultRequire": 1

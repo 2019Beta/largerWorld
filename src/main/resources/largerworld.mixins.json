@@ -7,12 +7,23 @@
     "BiomeSourceAccessor",
     "CarverMixin",
     "ChunkGeneratorMixin",
+    "ChunkFilterMixin",
+    "ChunkHolderMixin",
     "ChunkNoiseSamplerMixin",
     "ChunkRegionMixin",
     "MinecraftServerAccessor",
     "MinecraftServerMixin",
+    "PlayerManagerMixin",
+    "EntityTrackerMixin",
+    "EntityAccessor",
+    "ServerChunkLoadingManagerAccessor",
+    "ServerCommonNetworkHandlerMixin",
+    "ServerPlayNetworkHandlerMixin",
+    "ServerPlayerEntityMixin",
+    "ServerWorldMixin",
     "NoiseChunkGeneratorMixin",
-    "StructureContextMixin"
+    "StructureContextMixin",
+    "TeleportTargetAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

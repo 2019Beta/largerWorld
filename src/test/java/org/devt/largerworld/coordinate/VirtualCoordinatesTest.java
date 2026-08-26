@@ -22,6 +22,7 @@ public final class VirtualCoordinatesTest {
         rejectsCellOverflow();
         roundTripsCellWorldKeys();
         mapsNeighborChunksIntoClientView();
+        keepsConnectionCoordinatesStableAcrossCrossing();
     }
 
     private static void remainsInsideCanonicalCell() {
@@ -93,6 +94,21 @@ public final class VirtualCoordinatesTest {
         VirtualChunkPos west = VirtualChunkPos.fromClient(playerCell, -32769, -4);
         check(west.cell().equals(new CellPos(99, -50)), "west neighbor cell");
         equal(32767, west.localX(), "west neighbor local chunk");
+    }
+
+    private static void keepsConnectionCoordinatesStableAcrossCrossing() {
+        CellPos origin = new CellPos(7, -3);
+        VirtualPosition target = VirtualPosition.normalize(origin, 524288.0, 80, -524288.25);
+        check(target.cell().equals(new CellPos(8, -4)), "inbound coordinate resolves target cell");
+        equal(-524288.0, target.localX(), "inbound coordinate resolves local X");
+        equal(524287.75, target.localZ(), "inbound coordinate resolves local Z");
+
+        double clientXAfterCrossing = target.localX()
+                + (target.cell().x() - origin.x()) * (double) VirtualPosition.CELL_SIZE;
+        double clientZAfterCrossing = target.localZ()
+                + (target.cell().z() - origin.z()) * (double) VirtualPosition.CELL_SIZE;
+        equal(524288.0, clientXAfterCrossing, "client X remains continuous");
+        equal(-524288.25, clientZAfterCrossing, "client Z remains continuous");
     }
 
     private static void equal(long expected, long actual, String label) {
