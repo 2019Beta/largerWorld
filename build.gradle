@@ -35,6 +35,13 @@ repositories {
     // for more information about repositories.
 }
 
+sourceSets {
+    test {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
 dependencies {
     // To change the versions see the gradle.properties file
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -42,6 +49,18 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+tasks.register("coordinateTest", JavaExec) {
+    group = "verification"
+    description = "Runs the dependency-free coordinate model tests."
+    dependsOn tasks.named("testClasses")
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.devt.largerworld.coordinate.VirtualCoordinatesTest"
+}
+
+tasks.named("check") {
+    dependsOn tasks.named("coordinateTest")
 }
 
 processResources {

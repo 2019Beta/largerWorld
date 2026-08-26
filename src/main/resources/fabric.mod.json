@@ -2,12 +2,11 @@
   "schemaVersion": 1,
   "id": "largerworld",
   "version": "${version}",
-  "name": "largerWorld",
-  "description": "",
-  "authors": [],
+  "name": "Larger World",
+  "description": "A cell-based floating-origin prototype for very large Minecraft coordinates.",
+  "authors": ["devt"],
   "contact": {},
   "license": "GPL-3.0",
-  "icon": "assets/largerworld/icon.png",
   "environment": "*",
   "entrypoints": {
     "fabric-datagen": [
