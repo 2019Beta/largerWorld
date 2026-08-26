@@ -2,7 +2,6 @@ package org.devt.largerworld.client;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
 import org.devt.largerworld.Largerworld;
@@ -15,8 +14,7 @@ public class LargerworldClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        HudElementRegistry.attachElementAfter(
-                VanillaHudElements.SUBTITLES,
+        HudElementRegistry.addLast(
                 Identifier.of(Largerworld.MOD_ID, "global_coordinates"),
                 (context, tickCounter) -> {
                     MinecraftClient client = MinecraftClient.getInstance();

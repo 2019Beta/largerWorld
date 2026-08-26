@@ -24,6 +24,11 @@ Cell worlds are created on the server thread when first requested. Their registr
 keys are reversible, allowing player NBT that references a cell world to load it
 again after a restart. Empty cell worlds save and unload after 60 seconds.
 
+Every cell uses the original save seed. No cell-specific seed derivation is
+performed. Since generation still receives canonical local chunk coordinates,
+equal local coordinates in previously ungenerated cells produce the same terrain;
+continuous cross-cell terrain requires the separate global worldgen-offset layer.
+
 Players, mobs, items, projectiles and complete vehicle/passenger graphs migrate as
 one unit. Portals that temporarily place a player in a canonical base dimension are
 reconciled back to the same cell on the following server tick.
