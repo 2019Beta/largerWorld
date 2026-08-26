@@ -9,9 +9,13 @@ import net.minecraft.util.Identifier;
 import org.devt.largerworld.command.LargerWorldCommands;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.server.OriginShiftService;
+import org.devt.largerworld.world.CellWorldManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Largerworld implements ModInitializer {
     public static final String MOD_ID = "largerworld";
+    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     /**
      * Persistent per-player origin. Fabric synchronizes it to the owning client,
@@ -28,6 +32,9 @@ public class Largerworld implements ModInitializer {
     @Override
     public void onInitialize() {
         LargerWorldCommands.register();
-        ServerTickEvents.END_SERVER_TICK.register(OriginShiftService::tick);
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            OriginShiftService.tick(server);
+            CellWorldManager.tickEviction(server);
+        });
     }
 }

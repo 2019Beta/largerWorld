@@ -20,20 +20,33 @@ public class LargerworldClient implements ClientModInitializer {
                 Identifier.of(Largerworld.MOD_ID, "global_coordinates"),
                 (context, tickCounter) -> {
                     MinecraftClient client = MinecraftClient.getInstance();
-                    if (client.player == null || !client.getDebugHud().shouldShowDebugHud()) {
+                    if (client.player == null) {
                         return;
                     }
 
                     CellPos cell = client.player.getAttachedOrCreate(Largerworld.CELL_POS);
                     VirtualPosition position = VirtualPosition.normalize(
                             cell, client.player.getX(), client.player.getY(), client.player.getZ());
-                    int y = context.getScaledWindowHeight() - 22;
-                    String global = "Global XYZ: " + position.globalX(3) + " / "
+                    String global = "实际 XYZ: " + position.globalX(3) + " / "
                             + String.format(Locale.ROOT, "%.3f", position.y()) + " / " + position.globalZ(3);
                     String local = "Cell: [" + cell.x() + ", " + cell.z() + "]  Local XZ: "
                             + String.format(Locale.ROOT, "%.3f / %.3f", position.localX(), position.localZ());
-                    context.drawTextWithShadow(client.textRenderer, global, 2, y, 0xFFFFFF);
-                    context.drawTextWithShadow(client.textRenderer, local, 2, y + 10, 0xA0FFA0);
+
+                    if (client.getDebugHud().shouldShowDebugHud()) {
+                        int y = context.getScaledWindowHeight() - 22;
+                        context.drawTextWithShadow(client.textRenderer, global, 2, y, 0xFFFFFF);
+                        context.drawTextWithShadow(client.textRenderer, local, 2, y + 10, 0xA0FFA0);
+                        return;
+                    }
+
+                    int panelX = 4;
+                    int panelY = 4;
+                    int panelWidth = Math.max(
+                            client.textRenderer.getWidth(global),
+                            client.textRenderer.getWidth(local)) + 8;
+                    context.fill(panelX, panelY, panelX + panelWidth, panelY + 25, 0x90000000);
+                    context.drawTextWithShadow(client.textRenderer, global, panelX + 4, panelY + 3, 0xFFFFFF);
+                    context.drawTextWithShadow(client.textRenderer, local, panelX + 4, panelY + 13, 0xA0FFA0);
                 });
     }
 }

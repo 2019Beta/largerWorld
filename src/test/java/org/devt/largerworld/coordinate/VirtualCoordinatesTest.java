@@ -1,5 +1,11 @@
 package org.devt.largerworld.coordinate;
 
+import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.RegistryKeys;
+import net.minecraft.util.Identifier;
+import net.minecraft.world.World;
+import org.devt.largerworld.world.CellWorldKey;
+
 import java.math.BigDecimal;
 
 /** Dependency-free checks run by Gradle's coordinateTest task. */
@@ -14,6 +20,8 @@ public final class VirtualCoordinatesTest {
         normalizesSeveralCellsAtOnce();
         decomposesLargeGlobalCoordinatesExactly();
         rejectsCellOverflow();
+        roundTripsCellWorldKeys();
+        mapsNeighborChunksIntoClientView();
     }
 
     private static void remainsInsideCanonicalCell() {
@@ -62,6 +70,29 @@ public final class VirtualCoordinatesTest {
             thrown = true;
         }
         check(thrown, "cell overflow must be rejected");
+    }
+
+    private static void roundTripsCellWorldKeys() {
+        RegistryKey<World> base = RegistryKey.of(
+                RegistryKeys.WORLD, Identifier.of("example", "nested/dimension"));
+        CellPos cell = new CellPos(-9223372036854775807L, 4815162342L);
+        RegistryKey<World> encoded = CellWorldKey.forCell(base, cell);
+        CellWorldKey.Parsed parsed = CellWorldKey.parse(encoded).orElseThrow();
+        check(parsed.baseWorld().equals(base), "base dimension key round trip");
+        check(parsed.cell().equals(cell), "cell coordinate key round trip");
+        check(CellWorldKey.forCell(base, CellPos.ZERO).equals(base), "zero cell uses canonical world");
+    }
+
+    private static void mapsNeighborChunksIntoClientView() {
+        CellPos playerCell = new CellPos(100, -50);
+        VirtualChunkPos east = new VirtualChunkPos(new CellPos(101, -50), -32768, 17);
+        equal(32768, east.clientX(playerCell), "east neighbor client chunk");
+        VirtualChunkPos decoded = VirtualChunkPos.fromClient(playerCell, 32768, 17);
+        check(decoded.equals(east), "client chunk reverse mapping");
+
+        VirtualChunkPos west = VirtualChunkPos.fromClient(playerCell, -32769, -4);
+        check(west.cell().equals(new CellPos(99, -50)), "west neighbor cell");
+        equal(32767, west.localX(), "west neighbor local chunk");
     }
 
     private static void equal(long expected, long actual, String label) {

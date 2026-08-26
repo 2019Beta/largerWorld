@@ -9,10 +9,14 @@ import net.minecraft.command.permission.Permission;
 import net.minecraft.command.permission.PermissionLevel;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
+import org.devt.largerworld.server.OriginShiftService;
+import org.devt.largerworld.world.CellWorldKey;
+import org.devt.largerworld.world.CellWorldManager;
 
 import java.math.BigDecimal;
 import java.util.Locale;
@@ -56,11 +60,17 @@ public final class LargerWorldCommands {
             double y = DoubleArgumentType.getDouble(context, "y");
             VirtualPosition target = VirtualPosition.fromGlobal(globalX, y, globalZ);
 
-            if (player.hasVehicle()) {
-                player.dismountVehicle();
+            ServerWorld currentWorld = player.getEntityWorld();
+            ServerWorld targetWorld = CellWorldManager.getOrCreate(
+                    context.getSource().getServer(),
+                    CellWorldKey.baseWorld(currentWorld.getRegistryKey()),
+                    target.cell());
+            if (!OriginShiftService.teleportGraph(
+                    player.getRootVehicle(), targetWorld,
+                    target.localX(), target.y(), target.localZ(), target.cell())) {
+                context.getSource().sendError(Text.literal("The target cell could not be loaded"));
+                return 0;
             }
-            player.setAttached(Largerworld.CELL_POS, target.cell());
-            player.requestTeleport(target.localX(), target.y(), target.localZ());
             context.getSource().sendFeedback(() -> Text.literal(
                     "Teleported to global " + target.globalX(3) + " / "
                             + String.format(Locale.ROOT, "%.3f", target.y()) + " / " + target.globalZ(3)), true);
