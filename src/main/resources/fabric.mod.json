@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "largerworld",
+  "version": "${version}",
+  "name": "largerWorld",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "GPL-3.0",
+  "icon": "assets/largerworld/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-datagen": [
+      "org.devt.largerworld.client.LargerworldDataGenerator"
+    ],
+    "client": [
+      "org.devt.largerworld.client.LargerworldClient"
+    ],
+    "main": [
+      "org.devt.largerworld.Largerworld"
+    ]
+  },
+  "mixins": [
+    "largerworld.mixins.json",
+    {
+      "config": "largerworld.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
