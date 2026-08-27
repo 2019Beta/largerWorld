@@ -14,6 +14,7 @@ import org.devt.largerworld.coordinate.VirtualPosition;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /** Coordinate projections used by server-side behavior at a cell seam. */
 public final class CellBoundaryAccess {
@@ -115,6 +116,39 @@ public final class CellBoundaryAccess {
         double dy = observer.getY() - position.y;
         double dz = observer.getZ() - position.z;
         return OptionalDoubleDistance.of(dx * dx + dy * dy + dz * dz);
+    }
+
+    /**
+     * Resolves an entity reference in this cell or an immediately adjacent loaded cell.
+     * Vanilla lazy references only query their current ServerWorld, which makes owners,
+     * leash holders and other entity relationships disappear at a cell seam.
+     */
+    public static Optional<Entity> findLoadedEntity(ServerWorld source, UUID uuid) {
+        for (ServerWorld candidateWorld : source.getServer().getWorlds()) {
+            if (!CellWorldKey.baseWorld(source.getRegistryKey())
+                    .equals(CellWorldKey.baseWorld(candidateWorld.getRegistryKey()))) {
+                continue;
+            }
+            CellPos sourceCell = CellWorldKey.cell(source.getRegistryKey());
+            CellPos candidateCell = CellWorldKey.cell(candidateWorld.getRegistryKey());
+            long dx;
+            long dz;
+            try {
+                dx = Math.subtractExact(candidateCell.x(), sourceCell.x());
+                dz = Math.subtractExact(candidateCell.z(), sourceCell.z());
+            } catch (ArithmeticException exception) {
+                continue;
+            }
+            if (dx < -1 || dx > 1 || dz < -1 || dz > 1) {
+                continue;
+            }
+            for (Entity entity : candidateWorld.iterateEntities()) {
+                if (entity.getUuid().equals(uuid) && !entity.isRemoved()) {
+                    return Optional.of(entity);
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     /** Loaded neighboring worlds whose cells overlap a source-local search box. */

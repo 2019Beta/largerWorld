@@ -1,6 +1,8 @@
 package org.devt.largerworld.server;
 
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
@@ -143,8 +145,15 @@ public final class OriginShiftService {
             CellPos targetCell,
             boolean continuousMovement) {
         Map<UUID, Vec3d> velocities = new HashMap<>();
+        Map<UUID, UUID> mobTargetIds = new HashMap<>();
+        Map<UUID, LivingEntity> mobTargetReferences = new HashMap<>();
         for (Entity member : root.streamSelfAndPassengers().toList()) {
             velocities.put(member.getUuid(), member.getVelocity());
+            if (member instanceof MobEntity mob && mob.getTarget() != null) {
+                LivingEntity target = mob.getTarget();
+                mobTargetIds.put(member.getUuid(), target.getUuid());
+                mobTargetReferences.put(member.getUuid(), target);
+            }
             if (member instanceof ServerPlayerEntity player) {
                 // Capture the old connection origin before changing the logical
                 // world. A distant teleport may need to rebase it.
@@ -186,13 +195,33 @@ public final class OriginShiftService {
         // Vanilla may recreate regular entities and independently teleport their
         // passengers. Restore every member after the complete graph has been
         // rebuilt so those intermediate operations cannot discard momentum.
+        Map<UUID, Entity> rebuiltMembers = new HashMap<>();
         for (Entity member : teleportedRoot.streamSelfAndPassengers().toList()) {
+            rebuiltMembers.put(member.getUuid(), member);
             Vec3d velocity = velocities.get(member.getUuid());
             if (velocity != null) {
                 member.setVelocity(velocity);
                 if (!(member instanceof ServerPlayerEntity)) {
                     member.velocityDirty = true;
                 }
+            }
+        }
+
+        // Ordinary mobs are recreated by cross-world teleportation. Their goal
+        // objects and navigation are rebuilt, and vanilla does not serialize the
+        // live attack target. Restore that relation after the complete passenger
+        // graph exists so a pursuit does not stop exactly at the seam.
+        for (Map.Entry<UUID, UUID> entry : mobTargetIds.entrySet()) {
+            Entity rebuilt = rebuiltMembers.get(entry.getKey());
+            if (!(rebuilt instanceof MobEntity mob)) {
+                continue;
+            }
+            Entity graphTarget = rebuiltMembers.get(entry.getValue());
+            LivingEntity restoredTarget = graphTarget instanceof LivingEntity living
+                    ? living
+                    : mobTargetReferences.get(entry.getKey());
+            if (restoredTarget != null && !restoredTarget.isRemoved()) {
+                mob.setTarget(restoredTarget);
             }
         }
         return true;

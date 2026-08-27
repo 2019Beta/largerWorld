@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.WeakHashMap;
+import java.util.function.Supplier;
 
 /** Server-side packet source tagging and per-connection floating origin. */
 public final class CellPacketRouting {
@@ -185,6 +186,20 @@ public final class CellPacketRouting {
         ACTIVE_SOURCE.set(CellWorldKey.cell(world.getRegistryKey()));
         try {
             action.run();
+        } finally {
+            if (previous == null) {
+                ACTIVE_SOURCE.remove();
+            } else {
+                ACTIVE_SOURCE.set(previous);
+            }
+        }
+    }
+
+    public static <T> T withSourceResult(ServerWorld world, Supplier<T> action) {
+        CellPos previous = ACTIVE_SOURCE.get();
+        ACTIVE_SOURCE.set(CellWorldKey.cell(world.getRegistryKey()));
+        try {
+            return action.get();
         } finally {
             if (previous == null) {
                 ACTIVE_SOURCE.remove();

@@ -29,4 +29,18 @@ public abstract class EntityNavigationMixin {
         CellBoundaryAccess.project(target, entity.getEntityWorld()).ifPresent(projected ->
                 cir.setReturnValue(findPathTo(BlockPos.ofFloored(projected), distance)));
     }
+
+    @Inject(method = "startMovingTo(Lnet/minecraft/entity/Entity;D)Z",
+            at = @At("RETURN"), cancellable = true)
+    private void largerworld$moveDirectlyWhenSeamPathFails(
+            Entity target, double speed, CallbackInfoReturnable<Boolean> cir) {
+        if (cir.getReturnValue() || target.getEntityWorld() == entity.getEntityWorld()) {
+            return;
+        }
+        CellBoundaryAccess.project(target, entity.getEntityWorld()).ifPresent(projected -> {
+            entity.getMoveControl().moveTo(projected.x, projected.y, projected.z, speed);
+            cir.setReturnValue(true);
+        });
+    }
+
 }

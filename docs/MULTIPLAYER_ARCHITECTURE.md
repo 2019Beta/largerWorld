@@ -121,8 +121,10 @@ target cell and uses one vanilla client-world reload to discard state mapped wit
 the old origin. Async editors such as a sign opened across a seam before crossing
 are not yet remotely routed.
 
-Scheduled block/fluid ticks and arbitrary block writes are still owned by one
-backing `ServerWorld`; redstone, pistons, fluid flow and neighbor-update chains are
-not yet forwarded across a seam. Entity-area queries other than the standard mob
-active-target goal also remain world-local, so item merging and automatic pickup
-can wait until the item itself migrates into the player's cell.
+For loaded neighboring cells, block writes, neighbor-update chains, synchronized
+block events and scheduled block/fluid ticks are projected to the owning backing
+`ServerWorld`. This lets redstone, pistons and fluid flow continue through a seam
+without storing non-canonical positions. Item merge searches and the player's
+collision/pickup pass also query overlapping neighboring cells. These bridges do
+not synchronously create an unloaded cell; as with vanilla behavior, both sides
+must be loaded and ticking for propagation to continue.
