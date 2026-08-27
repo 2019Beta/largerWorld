@@ -8,7 +8,6 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArgs;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.invoke.arg.Args;
 
@@ -43,17 +42,5 @@ public abstract class ChunkNoiseSamplerMixin {
         CellPos cell = WorldgenCoordinates.cell(noiseConfig);
         WorldgenCoordinates.register(sampler, cell);
         WorldgenCoordinates.register(sampler.getAquiferSampler(), cell);
-    }
-
-    @ModifyVariable(method = "estimateSurfaceHeight", at = @At("HEAD"), argsOnly = true, index = 1)
-    private int largerworld$estimateGlobalSurfaceX(int localX) {
-        CellPos cell = WorldgenCoordinates.cell((ChunkNoiseSampler) (Object) this);
-        return WorldgenCoordinates.toGlobalBlockX(cell, localX);
-    }
-
-    @ModifyVariable(method = "estimateSurfaceHeight", at = @At("HEAD"), argsOnly = true, index = 2)
-    private int largerworld$estimateGlobalSurfaceZ(int localZ) {
-        CellPos cell = WorldgenCoordinates.cell((ChunkNoiseSampler) (Object) this);
-        return WorldgenCoordinates.toGlobalBlockZ(cell, localZ);
     }
 }

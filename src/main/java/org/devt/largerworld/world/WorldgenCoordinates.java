@@ -13,7 +13,15 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** Coordinate offsets associated with each cell world's private noise config. */
+/**
+ * Coordinate offsets associated with each cell world's private noise config.
+ *
+ * <p>Vanilla world-generation APIs expose horizontal coordinates as {@code int}.
+ * The virtual world is much larger, so sampling coordinates intentionally use
+ * two's-complement modulo 2^32. This keeps neighboring samples consecutive and
+ * deterministic instead of rejecting cells whose global block position exceeds
+ * {@link Integer#MAX_VALUE}.
+ */
 public final class WorldgenCoordinates {
     public static final int CELL_SIZE_CHUNKS = (int) (VirtualPosition.CELL_SIZE / 16L);
 
@@ -57,24 +65,24 @@ public final class WorldgenCoordinates {
 
     public static ChunkPos toGlobalChunk(CellPos cell, ChunkPos localPos) {
         return new ChunkPos(
-                addExact(localPos.x, chunkOffset(cell.x())),
-                addExact(localPos.z, chunkOffset(cell.z())));
+                addWrapped(localPos.x, cell.x(), CELL_SIZE_CHUNKS),
+                addWrapped(localPos.z, cell.z(), CELL_SIZE_CHUNKS));
     }
 
     public static int toLocalChunkX(CellPos cell, int globalChunkX) {
-        return subtractExact(globalChunkX, chunkOffset(cell.x()));
+        return subtractWrapped(globalChunkX, cell.x(), CELL_SIZE_CHUNKS);
     }
 
     public static int toLocalChunkZ(CellPos cell, int globalChunkZ) {
-        return subtractExact(globalChunkZ, chunkOffset(cell.z()));
+        return subtractWrapped(globalChunkZ, cell.z(), CELL_SIZE_CHUNKS);
     }
 
     public static int toGlobalBlockX(CellPos cell, int localBlockX) {
-        return addExact(localBlockX, blockOffset(cell.x()));
+        return addWrapped(localBlockX, cell.x(), VirtualPosition.CELL_SIZE);
     }
 
     public static int toGlobalBlockZ(CellPos cell, int localBlockZ) {
-        return addExact(localBlockZ, blockOffset(cell.z()));
+        return addWrapped(localBlockZ, cell.z(), VirtualPosition.CELL_SIZE);
     }
 
     public static BlockPos toGlobalBlock(CellPos cell, BlockPos localPos) {
@@ -86,25 +94,17 @@ public final class WorldgenCoordinates {
 
     public static BlockPos toLocalBlock(CellPos cell, BlockPos globalPos) {
         return new BlockPos(
-                subtractExact(globalPos.getX(), blockOffset(cell.x())),
+                subtractWrapped(globalPos.getX(), cell.x(), VirtualPosition.CELL_SIZE),
                 globalPos.getY(),
-                subtractExact(globalPos.getZ(), blockOffset(cell.z())));
+                subtractWrapped(globalPos.getZ(), cell.z(), VirtualPosition.CELL_SIZE));
     }
 
-    private static long chunkOffset(long cellCoordinate) {
-        return Math.multiplyExact(cellCoordinate, (long) CELL_SIZE_CHUNKS);
+    private static int addWrapped(int local, long cellCoordinate, long cellSize) {
+        return (int) (local + cellCoordinate * cellSize);
     }
 
-    private static long blockOffset(long cellCoordinate) {
-        return Math.multiplyExact(cellCoordinate, VirtualPosition.CELL_SIZE);
-    }
-
-    private static int addExact(int value, long offset) {
-        return Math.toIntExact(Math.addExact((long) value, offset));
-    }
-
-    private static int subtractExact(int value, long offset) {
-        return Math.toIntExact(Math.subtractExact((long) value, offset));
+    private static int subtractWrapped(int global, long cellCoordinate, long cellSize) {
+        return (int) (global - cellCoordinate * cellSize);
     }
 
 }

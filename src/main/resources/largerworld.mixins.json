@@ -16,6 +16,7 @@
     "PlayerManagerMixin",
     "EntityTrackerMixin",
     "EntityAccessor",
+    "MaterialRuleContextMixin",
     "ServerChunkLoadingManagerAccessor",
     "ServerCommonNetworkHandlerMixin",
     "ServerPlayNetworkHandlerMixin",
@@ -23,7 +24,8 @@
     "ServerWorldMixin",
     "NoiseChunkGeneratorMixin",
     "StructureContextMixin",
-    "TeleportTargetAccessor"
+    "TeleportTargetAccessor",
+    "WorldBorderMixin"
   ],
   "injectors": {
     "defaultRequire": 1

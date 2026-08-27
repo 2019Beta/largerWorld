@@ -3,8 +3,10 @@ package org.devt.largerworld.coordinate;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import org.devt.largerworld.world.CellWorldKey;
+import org.devt.largerworld.world.WorldgenCoordinates;
 
 import java.math.BigDecimal;
 
@@ -23,6 +25,9 @@ public final class VirtualCoordinatesTest {
         roundTripsCellWorldKeys();
         mapsNeighborChunksIntoClientView();
         keepsConnectionCoordinatesStableAcrossCrossing();
+        identifiesCanonicalChunkBounds();
+        mapsTransientRenderCenterWithoutCanonicalizing();
+        foldsDistantWorldgenCoordinatesDeterministically();
     }
 
     private static void remainsInsideCanonicalCell() {
@@ -109,6 +114,36 @@ public final class VirtualCoordinatesTest {
                 + (target.cell().z() - origin.z()) * (double) VirtualPosition.CELL_SIZE;
         equal(524288.0, clientXAfterCrossing, "client X remains continuous");
         equal(-524288.25, clientZAfterCrossing, "client Z remains continuous");
+    }
+
+    private static void identifiesCanonicalChunkBounds() {
+        check(VirtualChunkPos.isCanonical(-32768, 32767), "chunk bounds are inclusive/exclusive");
+        check(!VirtualChunkPos.isCanonical(32768, 0), "positive seam chunk belongs to next cell");
+        check(!VirtualChunkPos.isCanonical(-32769, 0), "negative seam chunk belongs to previous cell");
+    }
+
+    private static void mapsTransientRenderCenterWithoutCanonicalizing() {
+        equal(32768, VirtualChunkPos.toClientCoordinate(0, 0, 32768),
+                "transient seam render center");
+        equal(32768, VirtualChunkPos.toClientCoordinate(1, 0, -32768),
+                "neighbor cell render center");
+    }
+
+    private static void foldsDistantWorldgenCoordinatesDeterministically() {
+        CellPos cell = new CellPos(2098, 0);
+        int foldedBlock = WorldgenCoordinates.toGlobalBlockX(cell, 87552);
+        equal((int) 2_200_000_000L, foldedBlock, "distant block coordinate folds to int");
+
+        ChunkPos foldedChunk = WorldgenCoordinates.toGlobalChunk(cell, new ChunkPos(5472, 0));
+        equal(137_500_000, foldedChunk.x, "distant chunk coordinate");
+        equal(foldedBlock, foldedChunk.getStartX(), "chunk and block folding agree");
+        equal(87552, WorldgenCoordinates.toLocalBlock(
+                cell, new net.minecraft.util.math.BlockPos(foldedBlock, 0, 0)).getX(),
+                "folded block coordinate round trip");
+
+        equal(-1_048_576,
+                WorldgenCoordinates.toGlobalBlockX(new CellPos(Long.MAX_VALUE, 0), 0),
+                "maximum cell worldgen remains representable");
     }
 
     private static void equal(long expected, long actual, String label) {

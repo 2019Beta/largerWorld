@@ -4,6 +4,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.world.TeleportTarget;
 import org.devt.largerworld.server.SeamlessCellTeleport;
 import org.devt.largerworld.server.CellInteractionRouting;
+import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.world.CellWorldKey;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -39,6 +40,14 @@ public abstract class ServerPlayerEntityMixin {
         }
         if (CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey())
                 .equals(CellWorldKey.baseWorld(target.world().getRegistryKey()))) {
+            // A stable client origin cannot represent arbitrarily distant cells:
+            // vanilla clamps entity positions at 30 million and BlockPos is int.
+            // Rebase before the first target-world packet and let vanilla send a
+            // respawn packet so stale chunks/entities from the old origin vanish.
+            if (CellPacketRouting.rebaseForDistantTeleport(
+                    player, CellWorldKey.cell(target.world().getRegistryKey()))) {
+                return;
+            }
             cir.setReturnValue(SeamlessCellTeleport.teleport(player, target));
         }
     }

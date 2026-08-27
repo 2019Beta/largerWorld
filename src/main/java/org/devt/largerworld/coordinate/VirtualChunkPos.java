@@ -10,10 +10,14 @@ public record VirtualChunkPos(CellPos cell, int localX, int localZ) {
     public static final int HALF_CELL_CHUNKS = CELL_CHUNKS / 2;
 
     public VirtualChunkPos {
-        if (localX < -HALF_CELL_CHUNKS || localX >= HALF_CELL_CHUNKS
-                || localZ < -HALF_CELL_CHUNKS || localZ >= HALF_CELL_CHUNKS) {
+        if (!isCanonical(localX, localZ)) {
             throw new IllegalArgumentException("Local chunk coordinates must be canonical");
         }
+    }
+
+    public static boolean isCanonical(int localX, int localZ) {
+        return localX >= -HALF_CELL_CHUNKS && localX < HALF_CELL_CHUNKS
+                && localZ >= -HALF_CELL_CHUNKS && localZ < HALF_CELL_CHUNKS;
     }
 
     public static VirtualChunkPos fromClient(CellPos playerCell, int clientX, int clientZ) {
@@ -25,15 +29,16 @@ public record VirtualChunkPos(CellPos cell, int localX, int localZ) {
     }
 
     public int clientX(CellPos playerCell) {
-        return toClient(cell.x(), playerCell.x(), localX);
+        return toClientCoordinate(cell.x(), playerCell.x(), localX);
     }
 
     public int clientZ(CellPos playerCell) {
-        return toClient(cell.z(), playerCell.z(), localZ);
+        return toClientCoordinate(cell.z(), playerCell.z(), localZ);
     }
 
-    private static int toClient(long sourceCell, long playerCell, int local) {
-        long cellDelta = Math.subtractExact(sourceCell, playerCell);
+    /** Maps packet/control coordinates too; {@code local} may transiently cross a seam. */
+    public static int toClientCoordinate(long sourceCell, long originCell, int local) {
+        long cellDelta = Math.subtractExact(sourceCell, originCell);
         long result = Math.addExact(Math.multiplyExact(cellDelta, CELL_CHUNKS), local);
         return Math.toIntExact(result);
     }

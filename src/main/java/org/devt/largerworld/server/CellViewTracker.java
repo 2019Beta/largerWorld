@@ -89,6 +89,9 @@ public final class CellViewTracker {
     }
 
     public static boolean shouldRetain(ServerPlayerEntity player, CellPos source, ChunkPos localPos) {
+        if (!VirtualChunkPos.isCanonical(localPos.x, localPos.z)) {
+            return false;
+        }
         PlayerState state = STATES.get(player.getUuid());
         if (state == null) {
             return false;
@@ -104,6 +107,9 @@ public final class CellViewTracker {
     }
 
     public static List<ServerPlayerEntity> watchers(ServerWorld world, ChunkPos pos) {
+        if (!VirtualChunkPos.isCanonical(pos.x, pos.z)) {
+            return List.of();
+        }
         CellPos cell = CellWorldKey.cell(world.getRegistryKey());
         VirtualChunkPos key = new VirtualChunkPos(cell, pos.x, pos.z);
         List<ServerPlayerEntity> result = new ArrayList<>();
@@ -127,7 +133,9 @@ public final class CellViewTracker {
                 continue;
             }
             Entity entity = packet.getEntity(watch.world);
-            if (entity != null && state.watches.containsKey(
+            if (entity != null && VirtualChunkPos.isCanonical(
+                    entity.getChunkPos().x, entity.getChunkPos().z)
+                    && state.watches.containsKey(
                     new VirtualChunkPos(CellWorldKey.cell(watch.world.getRegistryKey()),
                             entity.getChunkPos().x, entity.getChunkPos().z))) {
                 return entity;
@@ -156,8 +164,12 @@ public final class CellViewTracker {
             double distance,
             Packet<?> packet) {
         CellPos sourceCell = CellWorldKey.cell(sourceWorld.getRegistryKey());
-        VirtualChunkPos sourceChunk = new VirtualChunkPos(
-                sourceCell, MathHelper.floor(x) >> 4, MathHelper.floor(z) >> 4);
+        int localChunkX = MathHelper.floor(x) >> 4;
+        int localChunkZ = MathHelper.floor(z) >> 4;
+        if (!VirtualChunkPos.isCanonical(localChunkX, localChunkZ)) {
+            return 0;
+        }
+        VirtualChunkPos sourceChunk = new VirtualChunkPos(sourceCell, localChunkX, localChunkZ);
         double squaredRange = distance * distance;
         int sent = 0;
         for (PlayerState state : STATES.values()) {

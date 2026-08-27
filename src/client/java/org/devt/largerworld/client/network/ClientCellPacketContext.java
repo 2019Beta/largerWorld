@@ -46,26 +46,29 @@ public final class ClientCellPacketContext {
     }
 
     public static int chunkX(int localX) {
-        Mapping mapping = ACTIVE.get();
-        return mapping == null ? localX : new VirtualChunkPos(mapping.source(), localX, 0).clientX(mapping.origin());
+        Mapping mapping = activeMapping();
+        return mapping == null ? localX : VirtualChunkPos.toClientCoordinate(
+                mapping.source().x(), mapping.origin().x(), localX);
     }
 
     public static int chunkZ(int localZ) {
-        Mapping mapping = ACTIVE.get();
-        return mapping == null ? localZ : new VirtualChunkPos(mapping.source(), 0, localZ).clientZ(mapping.origin());
+        Mapping mapping = activeMapping();
+        return mapping == null ? localZ : VirtualChunkPos.toClientCoordinate(
+                mapping.source().z(), mapping.origin().z(), localZ);
     }
 
     public static ChunkPos chunkPos(ChunkPos local) {
-        Mapping mapping = ACTIVE.get();
+        Mapping mapping = activeMapping();
         if (mapping == null) {
             return local;
         }
-        VirtualChunkPos virtual = new VirtualChunkPos(mapping.source(), local.x, local.z);
-        return new ChunkPos(virtual.clientX(mapping.origin()), virtual.clientZ(mapping.origin()));
+        return new ChunkPos(
+                VirtualChunkPos.toClientCoordinate(mapping.source().x(), mapping.origin().x(), local.x),
+                VirtualChunkPos.toClientCoordinate(mapping.source().z(), mapping.origin().z(), local.z));
     }
 
     public static ChunkSectionPos sectionPos(ChunkSectionPos local) {
-        Mapping mapping = ACTIVE.get();
+        Mapping mapping = activeMapping();
         if (mapping == null) {
             return local;
         }
@@ -73,7 +76,7 @@ public final class ClientCellPacketContext {
     }
 
     public static BlockPos blockPos(BlockPos local) {
-        Mapping mapping = ACTIVE.get();
+        Mapping mapping = activeMapping();
         if (mapping == null) {
             return local;
         }
@@ -84,17 +87,29 @@ public final class ClientCellPacketContext {
     }
 
     public static BlockPos blockPos(CellPos source, BlockPos local) {
-        Mapping active = ACTIVE.get();
+        if (CellPacketPayload.isEncodingPacket()) {
+            return local;
+        }
+        Mapping active = activeMapping();
         CellPos origin = active == null ? connectionOrigin : active.origin();
         if (origin == null) {
             return local;
         }
         Mapping mapping = new Mapping(source, origin);
-        return new BlockPos(blockX(local.getX(), mapping), local.getY(), blockZ(local.getZ(), mapping));
+        try {
+            return new BlockPos(blockX(local.getX(), mapping), local.getY(), blockZ(local.getZ(), mapping));
+        } catch (ArithmeticException outsideClientWindow) {
+            // GlobalPos packets (notably the shared overworld spawn point) may
+            // legitimately name a cell far outside the rebased client's int
+            // coordinate window. The dimension key still marks it as remote;
+            // retaining its local position is safer than disconnecting while
+            // applying metadata the client cannot spatially represent anyway.
+            return local;
+        }
     }
 
     public static Vec3d position(Vec3d local) {
-        Mapping mapping = ACTIVE.get();
+        Mapping mapping = activeMapping();
         if (mapping == null) {
             return local;
         }
@@ -111,7 +126,7 @@ public final class ClientCellPacketContext {
     }
 
     public static EntityPosition entityPosition(EntityPosition local, Set<PositionFlag> relatives) {
-        Mapping mapping = ACTIVE.get();
+        Mapping mapping = activeMapping();
         if (mapping == null) {
             return local;
         }
@@ -122,12 +137,12 @@ public final class ClientCellPacketContext {
     }
 
     public static double x(double localX) {
-        Mapping mapping = ACTIVE.get();
+        Mapping mapping = activeMapping();
         return mapping == null ? localX : positionX(localX, mapping);
     }
 
     public static double z(double localZ) {
-        Mapping mapping = ACTIVE.get();
+        Mapping mapping = activeMapping();
         return mapping == null ? localZ : positionZ(localZ, mapping);
     }
 
@@ -147,6 +162,10 @@ public final class ClientCellPacketContext {
 
     private static double positionZ(double localZ, Mapping mapping) {
         return localZ + (mapping.source().z() - mapping.origin().z()) * (double) VirtualPosition.CELL_SIZE;
+    }
+
+    private static Mapping activeMapping() {
+        return CellPacketPayload.isEncodingPacket() ? null : ACTIVE.get();
     }
 
     private record Mapping(CellPos source, CellPos origin) {

@@ -16,7 +16,9 @@ import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -129,8 +131,13 @@ public final class OriginShiftService {
 
     public static boolean teleportGraph(
             Entity root, ServerWorld targetWorld, double x, double y, double z, CellPos targetCell) {
+        Map<UUID, Vec3d> velocities = new HashMap<>();
         for (Entity member : root.streamSelfAndPassengers().toList()) {
+            velocities.put(member.getUuid(), member.getVelocity());
             if (member instanceof ServerPlayerEntity player) {
+                // Capture the old connection origin before changing the logical
+                // cell attachment; a distant teleport may need to rebase it.
+                CellPacketRouting.origin(player);
                 player.setAttached(Largerworld.CELL_POS, targetCell);
             }
         }
@@ -142,6 +149,25 @@ public final class OriginShiftService {
                 root.getYaw(),
                 root.getPitch(),
                 TeleportTarget.NO_OP);
-        return root.teleportTo(target) != null;
+        Entity[] result = new Entity[1];
+        CellPacketRouting.withSource(targetWorld, () -> result[0] = root.teleportTo(target));
+        Entity teleportedRoot = result[0];
+        if (teleportedRoot == null) {
+            return false;
+        }
+
+        // Vanilla may recreate regular entities and independently teleport their
+        // passengers. Restore every member after the complete graph has been
+        // rebuilt so those intermediate operations cannot discard momentum.
+        for (Entity member : teleportedRoot.streamSelfAndPassengers().toList()) {
+            Vec3d velocity = velocities.get(member.getUuid());
+            if (velocity != null) {
+                member.setVelocity(velocity);
+                if (!(member instanceof ServerPlayerEntity)) {
+                    member.velocityDirty = true;
+                }
+            }
+        }
+        return true;
     }
 }

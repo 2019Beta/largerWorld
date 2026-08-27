@@ -5,7 +5,7 @@
 1. Minecraft block/entity physics only receives local X/Z in `[-524288, 524288)`.
 2. A server-side chunk is identified by `(baseDimension, cellX, cellZ, localChunkX, localChunkZ)`.
 3. Each cell has its own `ServerWorld`, chunk cache, RegionFile, entity and POI storage.
-4. A client sees ordinary integer chunk coordinates relative to a stable per-connection origin cell.
+4. A client sees ordinary integer chunk coordinates relative to a normally stable per-connection origin cell.
 5. The owning server remains authoritative for all global/cell conversions.
 
 ## Storage and runtime
@@ -33,6 +33,12 @@ at `local + cell * 1048576`. Carver seeds, structure placement checks,
 structure-layout seeds and decoration seeds use the corresponding global chunk or
 block coordinates, so newly generated terrain continues across a seam while all
 persisted positions remain cell-local.
+
+Vanilla exposes noise, biome and several structure sampling coordinates as
+32-bit integers. Larger World folds virtual sampling coordinates modulo 2^32 at
+those API boundaries. This makes generation deterministic for every long-valued
+cell and keeps adjacent samples consecutive; persistent/global player positions
+are not folded.
 
 This only affects chunks generated after the offset layer is installed. Existing
 cell RegionFiles retain their old terrain and must not be mixed with regenerated
@@ -100,7 +106,9 @@ sequence and screen-distance checks instead of duplicating them.
 
 ## Current limits
 
-The stable origin is not rebased during a connection. After roughly 28 cell
-crossings in one direction, client coordinates approach vanilla's approximately
-30-million-block safety range; reconnecting selects a fresh origin. Async editors
-such as a sign opened across a seam before crossing are not yet remotely routed.
+The connection origin stays stable during ordinary seam crossings. Before a
+distant teleport or roughly 29 cell crossings would exceed vanilla's
+approximately 30-million-block safety range, the server rebases the origin to the
+target cell and uses one vanilla client-world reload to discard state mapped with
+the old origin. Async editors such as a sign opened across a seam before crossing
+are not yet remotely routed.

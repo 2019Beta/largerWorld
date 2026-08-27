@@ -48,8 +48,8 @@ public final class CellBiomeSource extends BiomeSource {
     }
 
     private static int offset(int local, long cellCoordinate) {
-        return Math.toIntExact(Math.addExact(
-                (long) local,
-                Math.multiplyExact(cellCoordinate, CELL_SIZE_BIOMES)));
+        // BiomeSource is int-based just like noise generation. Use the same
+        // deterministic low-32-bit folding instead of failing at distant cells.
+        return (int) (local + cellCoordinate * CELL_SIZE_BIOMES);
     }
 }

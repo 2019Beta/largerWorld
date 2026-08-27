@@ -5,7 +5,6 @@ import net.minecraft.network.packet.c2s.play.VehicleMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.math.Vec3d;
@@ -15,7 +14,6 @@ import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.server.CellInteractionRouting;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
-import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -24,10 +22,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ServerPlayNetworkHandler.class)
 public abstract class ServerPlayNetworkHandlerMixin {
     @Shadow public ServerPlayerEntity player;
-    @Shadow @Final protected MinecraftServer server;
 
     @Inject(method = "onPlayerAction", at = @At("HEAD"), cancellable = true)
     private void largerworld$routeAction(PlayerActionC2SPacket packet, CallbackInfo ci) {
+        var server = player.getEntityWorld().getServer();
         if (server.isOnThread() && CellInteractionRouting.reroutePlayerAction(
                 server, (ServerPlayNetworkHandler) (Object) this, packet)) {
             ci.cancel();
@@ -36,6 +34,7 @@ public abstract class ServerPlayNetworkHandlerMixin {
 
     @Inject(method = "onPlayerInteractBlock", at = @At("HEAD"), cancellable = true)
     private void largerworld$routeBlockInteraction(PlayerInteractBlockC2SPacket packet, CallbackInfo ci) {
+        var server = player.getEntityWorld().getServer();
         if (server.isOnThread() && CellInteractionRouting.rerouteBlockInteraction(
                 server, (ServerPlayNetworkHandler) (Object) this, packet)) {
             ci.cancel();
@@ -44,6 +43,7 @@ public abstract class ServerPlayNetworkHandlerMixin {
 
     @Inject(method = "onPlayerInteractEntity", at = @At("HEAD"), cancellable = true)
     private void largerworld$routeEntityInteraction(PlayerInteractEntityC2SPacket packet, CallbackInfo ci) {
+        var server = player.getEntityWorld().getServer();
         if (server.isOnThread() && CellInteractionRouting.rerouteEntityInteraction(
                 (ServerPlayNetworkHandler) (Object) this, packet)) {
             ci.cancel();

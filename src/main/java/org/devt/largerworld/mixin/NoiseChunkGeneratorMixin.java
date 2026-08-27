@@ -40,6 +40,19 @@ public abstract class NoiseChunkGeneratorMixin {
     }
 
     @Redirect(
+            method = "getBlockState",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/world/gen/chunk/ChunkNoiseSampler;estimateSurfaceHeight(II)I"))
+    private int largerworld$estimateDebugAquiferSurfaceAtGlobalPosition(
+            ChunkNoiseSampler sampler, int localX, int localZ) {
+        CellPos cell = WorldgenCoordinates.cell(sampler);
+        return sampler.estimateSurfaceHeight(
+                WorldgenCoordinates.toGlobalBlockX(cell, localX),
+                WorldgenCoordinates.toGlobalBlockZ(cell, localZ));
+    }
+
+    @Redirect(
             method = "populateNoise(Lnet/minecraft/world/gen/chunk/Blender;Lnet/minecraft/world/gen/StructureAccessor;Lnet/minecraft/world/gen/noise/NoiseConfig;Lnet/minecraft/world/chunk/Chunk;II)Lnet/minecraft/world/chunk/Chunk;",
             at = @At(
                     value = "INVOKE",

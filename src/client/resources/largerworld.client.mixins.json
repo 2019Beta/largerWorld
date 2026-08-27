@@ -19,7 +19,8 @@
     "PlayerSpawnPositionPacketMixin",
     "UnloadChunkPacketMixin",
     "VehicleMovePacketMixin",
-    "WorldBorderPacketMixin"
+    "WorldBorderPacketMixin",
+    "WorldBorderRenderingMixin"
   ],
   "injectors": {
     "defaultRequire": 1
