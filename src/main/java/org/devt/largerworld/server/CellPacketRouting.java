@@ -44,7 +44,7 @@ public final class CellPacketRouting {
     }
 
     public static synchronized CellPos origin(ServerPlayerEntity player) {
-        return ORIGINS.computeIfAbsent(player, ignored -> logicalCell(player));
+        return ORIGINS.computeIfAbsent(player, ignored -> currentWorldCell(player));
     }
 
     public static void forget(ServerPlayerEntity player) {
@@ -112,7 +112,7 @@ public final class CellPacketRouting {
 
         CellPos source = ACTIVE_SOURCE.get();
         if (source == null) {
-            source = logicalCell(handler.player);
+            source = currentWorldCell(handler.player);
         }
         // After a distant-origin rebase, late packets from the abandoned client
         // window must not be translated through BlockPos/ChunkPos. They describe
@@ -193,16 +193,19 @@ public final class CellPacketRouting {
     }
 
     public static double clientToLocalX(ServerPlayerEntity player, double clientX) {
-        CellPos current = logicalCell(player);
+        CellPos current = currentWorldCell(player);
         return clientX - (current.x() - origin(player).x()) * (double) VirtualPosition.CELL_SIZE;
     }
 
-    private static CellPos logicalCell(ServerPlayerEntity player) {
-        CellPos worldCell = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
-        CellPos attached = player.getAttachedOrCreate(Largerworld.CELL_POS);
-        return worldCell.equals(CellPos.ZERO) && !attached.equals(CellPos.ZERO)
-                ? attached
-                : worldCell;
+    /**
+     * Returns the cell that is actually producing or consuming packets now.
+     *
+     * <p>The CELL_POS attachment is persistent state used to restore a player
+     * after login. During a cross-world teleport it can briefly differ from the
+     * entity's real world, so it must never be used as a live packet source.</p>
+     */
+    private static CellPos currentWorldCell(ServerPlayerEntity player) {
+        return CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
     }
 
     private static boolean isCellInsideClientWindow(CellPos cell, CellPos clientOrigin) {
@@ -215,7 +218,7 @@ public final class CellPacketRouting {
     }
 
     public static double clientToLocalZ(ServerPlayerEntity player, double clientZ) {
-        CellPos current = logicalCell(player);
+        CellPos current = currentWorldCell(player);
         return clientZ - (current.z() - origin(player).z()) * (double) VirtualPosition.CELL_SIZE;
     }
 

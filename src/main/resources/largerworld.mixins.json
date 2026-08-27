@@ -4,6 +4,7 @@
   "package": "org.devt.largerworld.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "AquiferSamplerMixin",
     "BiomeSourceAccessor",
     "CarverMixin",
     "ChunkGeneratorMixin",

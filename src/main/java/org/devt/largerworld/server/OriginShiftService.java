@@ -136,9 +136,8 @@ public final class OriginShiftService {
             velocities.put(member.getUuid(), member.getVelocity());
             if (member instanceof ServerPlayerEntity player) {
                 // Capture the old connection origin before changing the logical
-                // cell attachment; a distant teleport may need to rebase it.
+                // world. A distant teleport may need to rebase it.
                 CellPacketRouting.origin(player);
-                player.setAttached(Largerworld.CELL_POS, targetCell);
             }
         }
 
@@ -155,6 +154,21 @@ public final class OriginShiftService {
         if (teleportedRoot == null) {
             return false;
         }
+
+        // Update the synchronized logical cell only after teleportTo has rebased
+        // the network origin and completed the vanilla world change. Setting it
+        // before teleport let persistent state report the destination while the
+        // player was still in the source world, so transition packets could be
+        // tagged as destination-cell data (or discarded as outside the old
+        // client window). On an integrated client that left stale source chunks
+        // mixed into the freshly loaded destination terrain.
+        CellPacketRouting.withSource(targetWorld, () -> {
+            for (Entity member : teleportedRoot.streamSelfAndPassengers().toList()) {
+                if (member instanceof ServerPlayerEntity player) {
+                    player.setAttached(Largerworld.CELL_POS, targetCell);
+                }
+            }
+        });
 
         // Vanilla may recreate regular entities and independently teleport their
         // passengers. Restore every member after the complete graph has been
