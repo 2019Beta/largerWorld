@@ -1,44 +1,46 @@
 # Larger World
 
-Fabric 1.21.11 implementation of partitioned coordinates (floating origin) with continuous chunk loading across cell boundaries.
+[English](README_EN.md) | **简体中文**
 
-Instead of widening Minecraft's `BlockPos` or `ChunkPos`, horizontal positions are stored as:
+Fabric 1.21.11 下的分区坐标（浮动原点，floating origin）实现，支持跨 cell 边界的连续区块加载。
+
+不是加宽 Minecraft 的 `BlockPos` 或 `ChunkPos`，而是把水平坐标存储为：
 
 ```text
 global = cell * 1,048,576 + local
 local in [-524,288, 524,288)
 ```
 
-The vanilla engine only ever sees local coordinates. `cellX`/`cellZ` are kept as 64-bit integers in player data and synced to the client. Global coordinates are composed with `BigDecimal` when displayed, so the high bits don't get dropped in a `double` conversion.
+原版引擎永远只看到 local 坐标。`cellX`/`cellZ` 以 64 位整数保存在玩家数据中并同步给客户端。显示全局坐标时用 `BigDecimal` 组合，避免高位在 `double` 转换中丢失。
 
-## What works now
+## 目前已实现的功能
 
-- Each nonzero cell gets its own `ServerWorld` on demand, with separate `region`/`entities`/`poi` storage and its own chunk cache.
-- All cells share the main world's seed. Generation samples global noise and biomes at `localChunk + cell × 65536`, so terrain stays continuous across cell borders.
-- Players can sit in different cells at the same time. Players, vehicles with all passengers, ordinary entities, and projectiles migrate between worlds.
-- When a player nears a boundary, the target cell's entry chunks are preloaded; crossing over switches to the target world.
-- The network coordinate origin is fixed for the lifetime of a connection. Chunks, lighting, biomes, and entities from the current and neighboring cells all render in one client view; crossing a border sends no dimension respawn packet and rebuilds nothing client-side.
-- Block updates, entity movement, sounds, particles, explosions, world events, and break animations from neighboring cells map into the same client view by source cell.
-- Movement, vehicle movement, mining, block use, and entity interaction route back to the correct cell; containers opened across a boundary still check distance against the target cell.
-- Cells survive logout, re-entry, and death, and stay synced to the current client.
-- The HUD shows real XYZ, the cell, and local XZ in the top-left corner. With F3 open the display moves to the bottom so it doesn't cover the vanilla debug overlay.
-- `/largerworld coords` prints exact global coordinates.
-- Admins can use `/largerworld teleport <globalX> <y> <globalZ>` to reach positions past the `long` block-count limit, as long as they fit in `long cell × 2^20`.
+- 每个非零 cell 按需创建独立的 `ServerWorld`，拥有各自的 `region`/`entities`/`poi` 存储和独立的区块缓存。
+- 所有 cell 共享主世界的种子。生成时在 `localChunk + cell × 65536` 处采样全局噪声与生物群系，因此跨 cell 边界的地形保持连续。
+- 不同玩家可以同时位于不同的 cell。玩家、满载乘客的载具、普通实体和弹射物都可以在世界之间迁移。
+- 玩家接近边界时，目标 cell 的入口区块会被预加载；跨过边界即切换到目标世界。
+- 网络坐标原点在一条连接的生命周期内固定不变。当前 cell 与相邻 cell 的区块、光照、生物群系和实体都在同一个客户端视图中渲染；跨越边界不会发送维度重生（respawn）包，客户端也无需重建任何内容。
+- 相邻 cell 的方块更新、实体移动、声音、粒子、爆炸、世界事件和破坏动画都按来源 cell 映射到同一个客户端视图。
+- 移动、载具移动、挖掘、使用方块和交互实体都会路由回正确的 cell；跨边界打开的容器仍会按目标 cell 检查距离。
+- cell 在退出登录、重新进入和死亡后依然保留，并保持与当前客户端同步。
+- HUD 左上角显示真实 XYZ、cell 编号和局部 XZ 坐标。打开 F3 调试界面时，显示会移到下方，避免遮住原版调试信息。
+- `/largerworld coords` 输出精确的全局坐标。
+- 管理员可以使用 `/largerworld teleport <globalX> <y> <globalZ>` 传送到超出 `long` 方块计数上限的位置，只要坐标仍在 `long cell × 2^20` 范围内。
 
-## Known limitations
+## 已知限制
 
-The network coordinate origin normally stays put within a connection, so the client world doesn't shift on every border crossing. When a long-range teleport or repeated crossing approaches the vanilla client safe range (~30,000,000 blocks), the server resets the origin to the target cell and forces one client world reload. Stored coordinates stay `long cell × 2^20`.
+网络坐标原点在连接期间通常会保持不变，因此客户端世界不会在每次跨边界时整体平移。当长距离传送或反复跨越逼近原版客户端的最大安全范围（约 30,000,000 格）时，服务器会把原点重置到目标 cell，并强制客户端重新加载一次世界。已存储的坐标始终保持 `long cell × 2^20`。
 
-Block changes in a neighboring cell currently propagate as full chunk refreshes. That keeps things consistent but costs more bandwidth than vanilla incremental packets; forwarding per-section deltas and lighting is the planned refinement. Async edit interfaces like signs are still rough around the edges when a player hasn't stepped into the target cell yet.
+相邻 cell 中的方块变更目前以整块区块刷新（full chunk refresh）的方式传播。这样能保证一致性，但比原版的增量数据包更费带宽；按 section 转发增量与光照是计划中的优化。异步编辑接口（如告示牌）在玩家尚未踏入目标 cell 时仍有些粗糙。
 
-Generation coordinate offsets only affect newly generated chunks. The vanilla worldgen API takes 32-bit horizontal coordinates, so sample coordinates beyond that range fold deterministically to their low 32 bits. Stored positions and displayed global coordinates keep full precision. Region files from cells generated before an upgrade are not rewritten; test boundary cases in a fresh world or in cells that haven't been generated yet.
+生成坐标偏移只影响新生成的区块。原版世界生成 API 只接受 32 位水平坐标，因此超出范围的采样坐标会确定性地折叠到其低 32 位。存储的位置和显示的全局坐标保持完整精度。升级前已生成的 cell 的区域文件不会被重写；请在新世界或尚未生成的 cell 中测试边界情况。
 
-Full packet mapping, neighbor shadow tracking, and inbound interaction routing are documented in [docs/MULTIPLAYER_ARCHITECTURE.md](docs/MULTIPLAYER_ARCHITECTURE.md).
+完整的包映射、相邻 cell 阴影跟踪和入站交互路由记录在 [docs/MULTIPLAYER_ARCHITECTURE.md](docs/MULTIPLAYER_ARCHITECTURE.md)。
 
-## Testing
+## 测试
 
 ```powershell
 gradle build
 ```
 
-`check` runs the coordinate-boundary, negative floor semantics, large-coordinate composition, and overflow tests without depending on a test framework.
+`check` 会运行坐标边界、负数向下取整语义、大坐标组合与溢出测试，不依赖任何测试框架。
