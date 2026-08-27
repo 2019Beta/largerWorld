@@ -126,11 +126,22 @@ public final class OriginShiftService {
                 CellWorldKey.baseWorld(currentWorld.getRegistryKey()),
                 normalized.cell());
         return teleportGraph(root, targetWorld,
-                normalized.localX(), normalized.y(), normalized.localZ(), normalized.cell());
+                normalized.localX(), normalized.y(), normalized.localZ(), normalized.cell(), true);
     }
 
     public static boolean teleportGraph(
             Entity root, ServerWorld targetWorld, double x, double y, double z, CellPos targetCell) {
+        return teleportGraph(root, targetWorld, x, y, z, targetCell, false);
+    }
+
+    private static boolean teleportGraph(
+            Entity root,
+            ServerWorld targetWorld,
+            double x,
+            double y,
+            double z,
+            CellPos targetCell,
+            boolean continuousMovement) {
         Map<UUID, Vec3d> velocities = new HashMap<>();
         for (Entity member : root.streamSelfAndPassengers().toList()) {
             velocities.put(member.getUuid(), member.getVelocity());
@@ -149,7 +160,9 @@ public final class OriginShiftService {
                 root.getPitch(),
                 TeleportTarget.NO_OP);
         Entity[] result = new Entity[1];
-        CellPacketRouting.withSource(targetWorld, () -> result[0] = root.teleportTo(target));
+        CellPacketRouting.withSource(targetWorld, () -> result[0] = continuousMovement
+                ? SeamlessCellTeleport.withContinuousMovement(() -> root.teleportTo(target))
+                : root.teleportTo(target));
         Entity teleportedRoot = result[0];
         if (teleportedRoot == null) {
             return false;

@@ -7,7 +7,9 @@ import net.minecraft.server.network.ServerPlayerEntity;
 public interface CellEntityTracker {
     Entity largerworld$getEntity();
 
-    void largerworld$startTracking(ServerPlayerEntity player);
+    void largerworld$startShadowTracking(ServerPlayerEntity player);
 
-    void largerworld$stopTracking(ServerPlayerEntity player);
+    void largerworld$stopShadowTracking(ServerPlayerEntity player, boolean handedToVanilla);
+
+    void largerworld$refreshTracking(ServerPlayerEntity player);
 }

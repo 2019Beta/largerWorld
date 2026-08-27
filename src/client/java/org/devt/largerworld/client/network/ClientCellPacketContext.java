@@ -45,6 +45,10 @@ public final class ClientCellPacketContext {
         return origin == null ? fallback : origin;
     }
 
+    public static boolean isApplyingCellPacket() {
+        return activeMapping() != null;
+    }
+
     public static int chunkX(int localX) {
         Mapping mapping = activeMapping();
         return mapping == null ? localX : VirtualChunkPos.toClientCoordinate(

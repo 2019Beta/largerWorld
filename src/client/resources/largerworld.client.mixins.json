@@ -12,6 +12,7 @@
     "DoublePositionPacketMixin",
     "EntityPositionPacketMixin",
     "EntityPositionSyncPacketMixin",
+    "EntitySpawnPacketHandlerMixin",
     "ExplosionPacketMixin",
     "LightUpdatePacketMixin",
     "LookAtPacketMixin",

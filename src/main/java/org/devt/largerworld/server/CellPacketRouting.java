@@ -21,6 +21,7 @@ import org.devt.largerworld.network.CellPacketPayload;
 import org.devt.largerworld.world.CellWorldKey;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.Map;
@@ -124,6 +125,14 @@ public final class CellPacketRouting {
                 && !VirtualChunkPos.isCanonical(chunk.getChunkX(), chunk.getChunkZ())) {
             return null;
         }
+        if (packet instanceof ChunkDataS2CPacket chunk) {
+            ChunkPos pos = new ChunkPos(chunk.getChunkX(), chunk.getChunkZ());
+            boolean suppressed = CellViewTracker.shouldSuppressHandoffChunk(
+                    handler.player, source, pos);
+            if (suppressed) {
+                return null;
+            }
+        }
         if (packet instanceof LightUpdateS2CPacket light
                 && !VirtualChunkPos.isCanonical(light.getChunkX(), light.getChunkZ())) {
             return null;
@@ -143,10 +152,11 @@ public final class CellPacketRouting {
                 && !VirtualChunkPos.isCanonical(unload.pos().x, unload.pos().z)) {
             return null;
         }
-        if (!DIRECT_UNLOAD.get()
-                && packet instanceof UnloadChunkS2CPacket unload
-                && CellViewTracker.shouldRetain(handler.player, source, unload.pos())) {
-            return null;
+        if (!DIRECT_UNLOAD.get() && packet instanceof UnloadChunkS2CPacket unload) {
+            boolean suppressed = CellViewTracker.shouldRetain(handler.player, source, unload.pos());
+            if (suppressed) {
+                return null;
+            }
         }
         return new CustomPayloadS2CPacket(new CellPacketPayload(source, origin(handler.player), cast(packet)));
     }

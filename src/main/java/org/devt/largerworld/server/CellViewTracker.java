@@ -62,6 +62,15 @@ public final class CellViewTracker {
         int centerX = MathHelper.floor(player.getX()) >> 4;
         int centerZ = MathHelper.floor(player.getZ()) >> 4;
         int radius = Math.max(2, player.getViewDistance());
+        Set<VirtualChunkPos> desired = desiredShadowChunks(currentCell, centerX, centerZ, radius);
+
+        state.updateWatches(server, desired);
+        state.updateEntities();
+        state.tickHandoff();
+    }
+
+    private static Set<VirtualChunkPos> desiredShadowChunks(
+            CellPos currentCell, int centerX, int centerZ, int radius) {
         Set<VirtualChunkPos> desired = new HashSet<>();
 
         for (int dz = -radius - 1; dz <= radius + 1; dz++) {
@@ -76,16 +85,52 @@ public final class CellViewTracker {
                 }
             }
         }
+        return desired;
+    }
 
-        for (VirtualChunkPos old : new ArrayList<>(state.watches.keySet())) {
-            if (!desired.contains(old)) {
-                state.remove(old);
+    /**
+     * Claims the source-cell part of the post-crossing view before vanilla
+     * removes the player from that world. This makes entity listener ownership
+     * overlap across the handoff instead of producing destroy/spawn packets.
+     */
+    public static void prepareTransition(
+            MinecraftServer server,
+            ServerPlayerEntity player,
+            CellPos targetCell,
+            double targetX,
+            double targetZ) {
+        PlayerState state = STATES.computeIfAbsent(player.getUuid(), ignored -> new PlayerState(player));
+        state.player = player;
+        CellPos sourceCell = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
+        int centerX = MathHelper.floor(targetX) >> 4;
+        int centerZ = MathHelper.floor(targetZ) >> 4;
+        int radius = Math.max(2, player.getViewDistance());
+        for (VirtualChunkPos pos : desiredShadowChunks(targetCell, centerX, centerZ, radius)) {
+            if (pos.cell().equals(sourceCell)) {
+                state.claimVanillaChunk(server, pos);
             }
         }
-        for (VirtualChunkPos wanted : desired) {
-            state.addOrSend(server, wanted);
-        }
         state.updateEntities();
+        state.beginHandoff(targetCell);
+    }
+
+    public static boolean shouldSuppressHandoffChunk(
+            ServerPlayerEntity player, CellPos source, ChunkPos localPos) {
+        PlayerState state = STATES.get(player.getUuid());
+        return state != null && state.consumeHandoffChunk(
+                new VirtualChunkPos(source, localPos.x, localPos.z));
+    }
+
+    public static boolean shouldHoldCurrentCellEntity(ServerPlayerEntity player, Entity entity) {
+        PlayerState state = STATES.get(player.getUuid());
+        if (state == null || state.handoffTicks <= 0
+                || entity.getEntityWorld() != player.getEntityWorld()) {
+            return false;
+        }
+        return shouldRetain(
+                player,
+                CellWorldKey.cell(entity.getEntityWorld().getRegistryKey()),
+                entity.getChunkPos());
     }
 
     public static boolean shouldRetain(ServerPlayerEntity player, CellPos source, ChunkPos localPos) {
@@ -210,6 +255,8 @@ public final class CellViewTracker {
         private ServerPlayerEntity player;
         private final Map<VirtualChunkPos, Watch> watches = new HashMap<>();
         private final Set<CellEntityTracker> trackedEntities = new HashSet<>();
+        private final Set<VirtualChunkPos> pendingHandoffChunks = new HashSet<>();
+        private int handoffTicks;
 
         private PlayerState(ServerPlayerEntity player) {
             this.player = player;
@@ -235,6 +282,60 @@ public final class CellViewTracker {
                     CellPacketRouting.sendFrom(player, watch.world,
                             new ChunkDataS2CPacket(chunk, watch.world.getLightingProvider(), null, null));
                     watch.sent = true;
+                }
+            }
+        }
+
+        private void updateWatches(MinecraftServer server, Set<VirtualChunkPos> desired) {
+            for (VirtualChunkPos old : new ArrayList<>(watches.keySet())) {
+                if (!desired.contains(old)) {
+                    remove(old);
+                }
+            }
+            for (VirtualChunkPos wanted : desired) {
+                addOrSend(server, wanted);
+            }
+        }
+
+        private void claimVanillaChunk(MinecraftServer server, VirtualChunkPos pos) {
+            Watch watch = watches.get(pos);
+            if (watch == null) {
+                ServerWorld world = CellWorldManager.getOrCreate(
+                        server,
+                        CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
+                        pos.cell());
+                watch = new Watch(world, new ChunkPos(pos.localX(), pos.localZ()));
+                watches.put(pos, watch);
+            }
+            addTickets(watch.world, watch.localPos);
+            watch.sent = true;
+        }
+
+        private void beginHandoff(CellPos targetCell) {
+            pendingHandoffChunks.clear();
+            for (Map.Entry<VirtualChunkPos, Watch> entry : watches.entrySet()) {
+                if (entry.getKey().cell().equals(targetCell) && entry.getValue().sent) {
+                    pendingHandoffChunks.add(entry.getKey());
+                }
+            }
+            // Chunk ownership updates can be flushed on the following server
+            // ticks. Keep a bounded grace period, and consume each duplicate
+            // at most once, so later real full-chunk refreshes still pass.
+            handoffTicks = 40;
+        }
+
+        private boolean consumeHandoffChunk(VirtualChunkPos pos) {
+            return handoffTicks > 0 && pendingHandoffChunks.remove(pos);
+        }
+
+        private void tickHandoff() {
+            if (handoffTicks > 0 && --handoffTicks == 0) {
+                pendingHandoffChunks.clear();
+                Int2ObjectMap<?> trackers = ((ServerChunkLoadingManagerAccessor)
+                        player.getEntityWorld().getChunkManager().chunkLoadingManager)
+                        .largerworld$getEntityTrackers();
+                for (Object value : trackers.values()) {
+                    ((CellEntityTracker) value).largerworld$refreshTracking(player);
                 }
             }
         }
@@ -271,7 +372,7 @@ public final class CellViewTracker {
                     if (entity != player && entry.getValue().contains(entity.getChunkPos().toLong())) {
                         desired.add(tracker);
                         if (!trackedEntities.contains(tracker)) {
-                            CellPacketRouting.withSource(world, () -> tracker.largerworld$startTracking(player));
+                            CellPacketRouting.withSource(world, () -> tracker.largerworld$startShadowTracking(player));
                         }
                     }
                 }
@@ -284,9 +385,7 @@ public final class CellViewTracker {
                             && shouldRetain(player,
                             CellWorldKey.cell(player.getEntityWorld().getRegistryKey()),
                             entity.getChunkPos());
-                    if (!handedToVanilla) {
-                        tracker.largerworld$stopTracking(player);
-                    }
+                    tracker.largerworld$stopShadowTracking(player, handedToVanilla);
                 }
             }
             trackedEntities.clear();
@@ -295,10 +394,12 @@ public final class CellViewTracker {
 
         private void releaseAll() {
             for (CellEntityTracker tracker : trackedEntities) {
-                tracker.largerworld$stopTracking(player);
+                tracker.largerworld$stopShadowTracking(player, false);
             }
             trackedEntities.clear();
             watches.clear();
+            pendingHandoffChunks.clear();
+            handoffTicks = 0;
             CellInteractionRouting.forget(player);
             CellPacketRouting.forget(player);
         }
@@ -318,4 +419,5 @@ public final class CellViewTracker {
             this.localPos = localPos;
         }
     }
+
 }
