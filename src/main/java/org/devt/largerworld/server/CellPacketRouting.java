@@ -4,6 +4,7 @@ import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.s2c.common.CustomPayloadS2CPacket;
 import net.minecraft.network.packet.s2c.play.BundleS2CPacket;
 import net.minecraft.network.packet.s2c.play.GameJoinS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
 import net.minecraft.network.packet.s2c.play.UnloadChunkS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.LightUpdateS2CPacket;
@@ -92,6 +93,15 @@ public final class CellPacketRouting {
         if (packet instanceof CustomPayloadS2CPacket custom
                 && custom.payload() instanceof CellPacketPayload) {
             return packet;
+        }
+        // Cross-world teleport temporarily tears down and rebuilds the riding
+        // graph. Packets emitted while that graph is incomplete make the client
+        // dismount for a few ticks and it consequently stops sending
+        // VehicleMove packets. OriginShiftService sends one authoritative
+        // passenger packet after the complete graph has reached the target.
+        if (SeamlessCellTeleport.isContinuousMovement()
+                && packet instanceof EntityPassengersSetS2CPacket) {
+            return null;
         }
         // Bundle packets are synthetic transport containers and are not part of
         // the normal play-state packet codec. Wrapping the container itself in a

@@ -19,20 +19,10 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.UUID;
 
 /** Redirects read-only block queries crossing a cell seam to the loaded neighboring cell. */
 @Mixin(World.class)
 public abstract class WorldBoundaryMixin {
-    @Inject(method = "getEntity(Ljava/util/UUID;)Lnet/minecraft/entity/Entity;",
-            at = @At("RETURN"), cancellable = true)
-    private void largerworld$getEntityAcrossCell(
-            UUID uuid, CallbackInfoReturnable<Entity> cir) {
-        if (cir.getReturnValue() == null && (Object) this instanceof ServerWorld world) {
-            CellBoundaryAccess.findLoadedEntity(world, uuid).ifPresent(cir::setReturnValue);
-        }
-    }
-
     @Inject(method = "setBlockState(Lnet/minecraft/util/math/BlockPos;Lnet/minecraft/block/BlockState;II)Z",
             at = @At("HEAD"), cancellable = true)
     private void largerworld$setNeighborBlockState(

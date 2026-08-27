@@ -9,11 +9,23 @@ import org.devt.largerworld.world.CellBoundaryAccess;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.util.UUID;
 
 /** Supplies the leash pull that vanilla skips when holder and held entity use adjacent cell worlds. */
 @Mixin(Leashable.class)
 public interface LeashableMixin {
+    @Redirect(
+            method = "resolveLeashData",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/server/world/ServerWorld;getEntity(Ljava/util/UUID;)Lnet/minecraft/entity/Entity;"))
+    private static Entity largerworld$resolveHolderAcrossCell(
+            ServerWorld world, UUID uuid) {
+        return world.getEntityAnyDimension(uuid);
+    }
+
     @Inject(method = "tickLeash", at = @At("RETURN"))
     private static void largerworld$tickAcrossCell(
             ServerWorld world, Entity held, CallbackInfo ci) {

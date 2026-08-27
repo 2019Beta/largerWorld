@@ -395,6 +395,13 @@ public final class CellViewTracker {
                             && shouldRetain(player,
                             CellWorldKey.cell(player.getEntityWorld().getRegistryKey()),
                             entity.getChunkPos());
+                    if (!handedToVanilla) {
+                        handedToVanilla = desired.stream().anyMatch(replacement -> {
+                            Entity replacementEntity = replacement.largerworld$getEntity();
+                            return replacementEntity.getId() == entity.getId()
+                                    && replacementEntity.getUuid().equals(entity.getUuid());
+                        });
+                    }
                     tracker.largerworld$stopShadowTracking(player, handedToVanilla);
                 }
             }

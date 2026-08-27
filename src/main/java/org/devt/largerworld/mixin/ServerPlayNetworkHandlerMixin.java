@@ -1,5 +1,6 @@
 package org.devt.largerworld.mixin;
 
+import net.minecraft.entity.Entity;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.VehicleMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
@@ -13,6 +14,8 @@ import net.minecraft.util.hit.BlockHitResult;
 import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellViewTracker;
+import org.devt.largerworld.server.OriginShiftService;
+import org.devt.largerworld.Largerworld;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -23,6 +26,56 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ServerPlayNetworkHandler.class)
 public abstract class ServerPlayNetworkHandlerMixin {
     @Shadow public ServerPlayerEntity player;
+
+    @Inject(method = "onVehicleMove", at = @At("HEAD"))
+    private void largerworld$logVehicleMoveBefore(
+            VehicleMoveC2SPacket packet, CallbackInfo ci) {
+        if (!player.getEntityWorld().getServer().isOnThread()) {
+            return;
+        }
+        Entity root = player.getRootVehicle();
+        if (!OriginShiftService.isDebugTransition(root)) {
+            return;
+        }
+        Vec3d raw = packet.position();
+        Vec3d local = new Vec3d(
+                CellPacketRouting.clientToLocalX(player, raw.x), raw.y,
+                CellPacketRouting.clientToLocalZ(player, raw.z));
+        ServerPlayNetworkHandlerAccessor accessor =
+                (ServerPlayNetworkHandlerAccessor) (Object) this;
+        Largerworld.LOGGER.info(
+                "[cell-transition] VEHICLE_BEFORE rootId={} rootObject={} topmostId={} "
+                        + "topmostObject={} raw=({},{},{}) local=({},{},{}) "
+                        + "serverPos=({},{},{}) velocity={} last=({},{},{}) updated=({},{},{})",
+                root.getId(), System.identityHashCode(root),
+                accessor.largerworld$getTopmostRiddenEntity() == null ? -1
+                        : accessor.largerworld$getTopmostRiddenEntity().getId(),
+                accessor.largerworld$getTopmostRiddenEntity() == null ? -1
+                        : System.identityHashCode(accessor.largerworld$getTopmostRiddenEntity()),
+                raw.x, raw.y, raw.z, local.x, local.y, local.z,
+                root.getX(), root.getY(), root.getZ(), root.getVelocity(),
+                accessor.largerworld$getLastTickRiddenX(),
+                accessor.largerworld$getLastTickRiddenY(),
+                accessor.largerworld$getLastTickRiddenZ(),
+                accessor.largerworld$getUpdatedRiddenX(),
+                accessor.largerworld$getUpdatedRiddenY(),
+                accessor.largerworld$getUpdatedRiddenZ());
+    }
+
+    @Inject(method = "onVehicleMove", at = @At("RETURN"))
+    private void largerworld$logVehicleMoveAfter(
+            VehicleMoveC2SPacket packet, CallbackInfo ci) {
+        if (!player.getEntityWorld().getServer().isOnThread()) {
+            return;
+        }
+        Entity root = player.getRootVehicle();
+        if (OriginShiftService.isDebugTransition(root)) {
+            Largerworld.LOGGER.info(
+                    "[cell-transition] VEHICLE_AFTER rootId={} object={} pos=({},{},{}) velocity={}",
+                    root.getId(), System.identityHashCode(root),
+                    root.getX(), root.getY(), root.getZ(), root.getVelocity());
+        }
+    }
 
     @Inject(method = "onPlayerAction", at = @At("HEAD"), cancellable = true)
     private void largerworld$routeAction(PlayerActionC2SPacket packet, CallbackInfo ci) {

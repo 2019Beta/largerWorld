@@ -1,12 +1,15 @@
 package org.devt.largerworld.server;
 
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
+import net.minecraft.network.packet.s2c.common.CustomPayloadS2CPacket;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -16,6 +19,8 @@ import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
+import org.devt.largerworld.mixin.ServerPlayNetworkHandlerAccessor;
+import org.devt.largerworld.network.EntityHandoffPayload;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -23,9 +28,13 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Iterator;
+import java.util.List;
 
 /** Migrates complete entity/passenger graphs between independently stored cell worlds. */
 public final class OriginShiftService {
+    private static final Map<UUID, DebugProbe> DEBUG_PROBES = new HashMap<>();
+
     private OriginShiftService() {
     }
 
@@ -51,6 +60,7 @@ public final class OriginShiftService {
                 shiftIfNeeded(root);
             }
         }
+        tickDebugProbes();
     }
 
     private static void preloadApproachingCells(MinecraftServer server) {
@@ -144,6 +154,13 @@ public final class OriginShiftService {
             double z,
             CellPos targetCell,
             boolean continuousMovement) {
+        if (!(root.getEntityWorld() instanceof ServerWorld sourceWorld)) {
+            return false;
+        }
+        boolean debugTransition = continuousMovement && root.hasPassengers();
+        if (debugTransition) {
+            logGraph("BEGIN", root);
+        }
         Map<UUID, Vec3d> velocities = new HashMap<>();
         Map<UUID, UUID> mobTargetIds = new HashMap<>();
         Map<UUID, LivingEntity> mobTargetReferences = new HashMap<>();
@@ -169,11 +186,36 @@ public final class OriginShiftService {
                 root.getPitch(),
                 TeleportTarget.NO_OP);
         Entity[] result = new Entity[1];
+        List<ServerPlayerEntity> handoffPlayers = continuousMovement && root.hasPassengers()
+                ? root.streamSelfAndPassengers()
+                        .filter(member -> member instanceof ServerPlayerEntity player
+                                && player.hasVehicle())
+                        .map(member -> (ServerPlayerEntity) member)
+                        .toList()
+                : List.of();
+        for (ServerPlayerEntity player : handoffPlayers) {
+            CellPacketRouting.sendFrom(
+                    player,
+                    sourceWorld,
+                    new CustomPayloadS2CPacket(
+                            new EntityHandoffPayload(root.getId(), true)));
+        }
         CellPacketRouting.withSource(targetWorld, () -> result[0] = continuousMovement
                 ? SeamlessCellTeleport.withContinuousMovement(() -> root.teleportTo(target))
                 : root.teleportTo(target));
         Entity teleportedRoot = result[0];
         if (teleportedRoot == null) {
+            for (ServerPlayerEntity player : handoffPlayers) {
+                CellPacketRouting.sendFrom(
+                        player,
+                        player.getEntityWorld(),
+                        new CustomPayloadS2CPacket(
+                                new EntityHandoffPayload(root.getId(), false)));
+            }
+            if (debugTransition) {
+                Largerworld.LOGGER.warn("[cell-transition] FAILED rootUuid={} targetCell={}",
+                        root.getUuid(), targetCell);
+            }
             return false;
         }
 
@@ -207,6 +249,16 @@ public final class OriginShiftService {
             }
         }
 
+        if (debugTransition) {
+            logGraph("REBUILT", teleportedRoot);
+            DEBUG_PROBES.put(teleportedRoot.getUuid(),
+                    new DebugProbe(
+                            teleportedRoot,
+                            teleportedRoot.streamSelfAndPassengers()
+                                    .map(Entity::getUuid).collect(java.util.stream.Collectors.toSet()),
+                            8));
+        }
+
         // Ordinary mobs are recreated by cross-world teleportation. Their goal
         // objects and navigation are rebuilt, and vanilla does not serialize the
         // live attack target. Restore that relation after the complete passenger
@@ -224,6 +276,113 @@ public final class OriginShiftService {
                 mob.setTarget(restoredTarget);
             }
         }
+
+        // VehicleMove validation keeps both an object reference and local-cell
+        // coordinates from the previous tick. Rebase them immediately; waiting
+        // for the next network-handler tick rejects or corrects the first input
+        // packet after the seam and produces a visible one-tick pause.
+        for (Entity member : teleportedRoot.streamSelfAndPassengers().toList()) {
+            if (!(member instanceof ServerPlayerEntity player) || !player.hasVehicle()) {
+                continue;
+            }
+            Entity vehicle = player.getRootVehicle();
+            ServerPlayNetworkHandlerAccessor handler =
+                    (ServerPlayNetworkHandlerAccessor) player.networkHandler;
+            handler.largerworld$setTopmostRiddenEntity(vehicle);
+            handler.largerworld$setLastTickRiddenX(vehicle.getX());
+            handler.largerworld$setLastTickRiddenY(vehicle.getY());
+            handler.largerworld$setLastTickRiddenZ(vehicle.getZ());
+            handler.largerworld$setUpdatedRiddenX(vehicle.getX());
+            handler.largerworld$setUpdatedRiddenY(vehicle.getY());
+            handler.largerworld$setUpdatedRiddenZ(vehicle.getZ());
+        }
+
+        // Entity tracking may start in the destination before its passenger
+        // entities have spawned on the client. Send the final relation only
+        // after the whole graph and the vehicle validation baselines are ready.
+        // The client-side handoff queue handles the remaining packet-order race.
+        if (teleportedRoot.hasPassengers()) {
+            EntityPassengersSetS2CPacket passengers =
+                    new EntityPassengersSetS2CPacket(teleportedRoot);
+            CellPacketRouting.withSource(targetWorld, () ->
+                    targetWorld.getChunkManager()
+                            .sendToNearbyPlayers(teleportedRoot, passengers));
+            CellViewTracker.sendToShadowPlayers(
+                    targetWorld,
+                    null,
+                    teleportedRoot.getX(),
+                    teleportedRoot.getY(),
+                    teleportedRoot.getZ(),
+                    256.0,
+                    passengers);
+        }
+        for (ServerPlayerEntity player : handoffPlayers) {
+            CellPacketRouting.sendFrom(
+                    player,
+                    targetWorld,
+                    new CustomPayloadS2CPacket(
+                            new EntityHandoffPayload(teleportedRoot.getId(), false)));
+        }
         return true;
+    }
+
+    public static boolean isDebugTransition(Entity entity) {
+        if (entity == null) {
+            return false;
+        }
+        UUID entityUuid = entity.getUuid();
+        UUID rootUuid = entity.getRootVehicle().getUuid();
+        return DEBUG_PROBES.containsKey(rootUuid)
+                || DEBUG_PROBES.values().stream()
+                .anyMatch(probe -> probe.memberUuids().contains(entityUuid));
+    }
+
+    private static void logGraph(String phase, Entity root) {
+        for (Entity member : root.streamSelfAndPassengers().toList()) {
+            Entity vehicle = member.getVehicle();
+            Vec3d velocity = member.getVelocity();
+            Largerworld.LOGGER.info(
+                    "[cell-transition] {} type={} uuid={} id={} object={} world={} "
+                            + "pos=({},{},{}) velocity=({},{},{}) vehicleId={} passengers={}",
+                    phase,
+                    EntityType.getId(member.getType()),
+                    member.getUuid(),
+                    member.getId(),
+                    System.identityHashCode(member),
+                    member.getEntityWorld().getRegistryKey().getValue(),
+                    member.getX(), member.getY(), member.getZ(),
+                    velocity.x, velocity.y, velocity.z,
+                    vehicle == null ? -1 : vehicle.getId(),
+                    member.getPassengerList().stream().map(Entity::getId).toList());
+        }
+    }
+
+    private static void tickDebugProbes() {
+        Iterator<Map.Entry<UUID, DebugProbe>> iterator = DEBUG_PROBES.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<UUID, DebugProbe> entry = iterator.next();
+            DebugProbe probe = entry.getValue();
+            Entity root = probe.root();
+            Vec3d velocity = root.getVelocity();
+            Largerworld.LOGGER.info(
+                    "[cell-transition] TICK remaining={} type={} uuid={} id={} object={} "
+                            + "removed={} world={} pos=({},{},{}) velocity=({},{},{}) passengers={}",
+                    probe.remainingTicks(),
+                    EntityType.getId(root.getType()),
+                    root.getUuid(), root.getId(), System.identityHashCode(root),
+                    root.isRemoved(), root.getEntityWorld().getRegistryKey().getValue(),
+                    root.getX(), root.getY(), root.getZ(),
+                    velocity.x, velocity.y, velocity.z,
+                    root.getPassengerList().stream().map(Entity::getId).toList());
+            if (probe.remainingTicks() <= 1 || root.isRemoved()) {
+                iterator.remove();
+            } else {
+                entry.setValue(new DebugProbe(
+                        root, probe.memberUuids(), probe.remainingTicks() - 1));
+            }
+        }
+    }
+
+    private record DebugProbe(Entity root, Set<UUID> memberUuids, int remainingTicks) {
     }
 }

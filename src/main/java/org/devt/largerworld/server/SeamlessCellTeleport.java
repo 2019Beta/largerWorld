@@ -31,6 +31,10 @@ public final class SeamlessCellTeleport {
         }
     }
 
+    public static boolean isContinuousMovement() {
+        return CONTINUOUS_MOVEMENT.get();
+    }
+
     public static ServerPlayerEntity teleport(ServerPlayerEntity player, TeleportTarget target) {
         ServerWorld from = player.getEntityWorld();
         ServerWorld to = target.world();
