@@ -6,6 +6,7 @@ import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
 import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.client.network.ClientCellPacketContext;
+import org.devt.largerworld.client.network.ClientEntityHandoff;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -28,6 +29,21 @@ public abstract class EntitySpawnPacketHandlerMixin {
         ClientWorld world = ((ClientPlayNetworkHandler) (Object) this).getWorld();
         net.minecraft.entity.Entity existing = world == null
                 ? null : world.getEntityById(packet.getEntityId());
+        if (existing != null
+                && existing.getUuid().equals(packet.getUuid())
+                && ClientEntityHandoff.shouldKeep(existing)) {
+            // This spawn describes the seam position at the instant the server
+            // rebuilt the entity. It can arrive several movement packets later;
+            // applying it would rewind the still-moving client vehicle and reset
+            // its interpolation. The retained object is already at the correct
+            // stitched-world position, and following tracker packets update its
+            // data normally, so ignore the duplicate spawn in its entirety.
+            Largerworld.LOGGER.info(
+                    "[cell-transition] CLIENT_HANDOFF entityId={}",
+                    packet.getEntityId());
+            ci.cancel();
+            return;
+        }
         // Shadow tracking and destination tracking can legitimately announce
         // the same UUID twice. Only suppress that exact duplicate. An ID match
         // by itself is not sufficient: cancelling a different UUID leaves the
@@ -54,6 +70,19 @@ public abstract class EntitySpawnPacketHandlerMixin {
         }
 
         ClientWorld world = ((ClientPlayNetworkHandler) (Object) this).getWorld();
+        net.minecraft.entity.Entity vehicle = world == null
+                ? null : world.getEntityById(packet.getEntityId());
+        int[] currentPassengerIds = vehicle == null ? new int[0]
+                : vehicle.getPassengerList().stream()
+                .mapToInt(net.minecraft.entity.Entity::getId).toArray();
+        if (ClientEntityHandoff.shouldKeep(vehicle)
+                && Arrays.equals(currentPassengerIds, packet.getPassengerIds())) {
+            // The retained client graph is already correct. Vanilla would
+            // remove and re-add every passenger, which resets riding state and
+            // creates the same one-frame pause that retaining the vehicle fixes.
+            ci.cancel();
+            return;
+        }
         if (ClientCellPacketContext.isApplyingCellPacket()
                 && (world == null || world.getEntityById(packet.getEntityId()) == null)) {
             largerworld$pendingPassengers.put(packet.getEntityId(), packet);

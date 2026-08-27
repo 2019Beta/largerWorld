@@ -9,6 +9,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
+import net.minecraft.network.packet.s2c.common.CustomPayloadS2CPacket;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -19,6 +20,7 @@ import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
 import org.devt.largerworld.mixin.ServerPlayNetworkHandlerAccessor;
+import org.devt.largerworld.network.EntityHandoffPayload;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -176,6 +178,19 @@ public final class OriginShiftService {
                 // Capture the old connection origin before changing the logical
                 // world. A distant teleport may need to rebase it.
                 CellPacketRouting.origin(player);
+            }
+        }
+
+        // The source tracker can flush its destroy packet after the synchronous
+        // teleport context has ended. Tell the controlling client up front to
+        // retain the same entity object until the destination spawn arrives;
+        // that object contains the authoritative client-side vehicle momentum.
+        if (continuousMovement) {
+            for (Entity member : root.streamSelfAndPassengers().toList()) {
+                if (member instanceof ServerPlayerEntity player && player.hasVehicle()) {
+                    player.networkHandler.sendPacket(new CustomPayloadS2CPacket(
+                            new EntityHandoffPayload(root.getId(), root.getUuid())));
+                }
             }
         }
 

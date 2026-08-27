@@ -22,6 +22,7 @@ import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.coordinate.VirtualChunkPos;
 import org.devt.largerworld.network.CellPacketPayload;
+import org.devt.largerworld.network.EntityHandoffPayload;
 import org.devt.largerworld.world.CellWorldKey;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
@@ -94,7 +95,8 @@ public final class CellPacketRouting {
             return packet;
         }
         if (packet instanceof CustomPayloadS2CPacket custom
-                && custom.payload() instanceof CellPacketPayload) {
+                && (custom.payload() instanceof CellPacketPayload
+                || custom.payload() instanceof EntityHandoffPayload)) {
             return packet;
         }
         if (SeamlessCellTeleport.isContinuousMovement()
