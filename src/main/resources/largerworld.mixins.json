@@ -4,11 +4,13 @@
   "package": "org.devt.largerworld.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "ActiveTargetGoalMixin",
     "AquiferSamplerMixin",
     "BiomeSourceAccessor",
     "CarverMixin",
     "ChunkGeneratorMixin",
     "ChunkFilterMixin",
+    "ChunkCacheBoundaryMixin",
     "ChunkHolderMixin",
     "ChunkNoiseSamplerMixin",
     "ChunkRegionMixin",
@@ -17,6 +19,9 @@
     "PlayerManagerMixin",
     "EntityTrackerMixin",
     "EntityAccessor",
+    "EntityDistanceMixin",
+    "EntityNavigationMixin",
+    "LivingEntityVisibilityMixin",
     "MaterialRuleContextMixin",
     "ServerChunkLoadingManagerAccessor",
     "ServerCommonNetworkHandlerMixin",
@@ -26,7 +31,10 @@
     "NoiseChunkGeneratorMixin",
     "StructureContextMixin",
     "TeleportTargetAccessor",
-    "WorldBorderMixin"
+    "TargetPredicateMixin",
+    "TrackTargetGoalAccessor",
+    "WorldBorderMixin",
+    "WorldBoundaryMixin"
   ],
   "injectors": {
     "defaultRequire": 1

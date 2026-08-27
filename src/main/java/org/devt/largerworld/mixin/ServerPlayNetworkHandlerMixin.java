@@ -12,6 +12,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.hit.BlockHitResult;
 import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.server.CellInteractionRouting;
+import org.devt.largerworld.server.CellViewTracker;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -55,6 +56,12 @@ public abstract class ServerPlayNetworkHandlerMixin {
             net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket packet,
             CallbackInfo ci) {
         CellInteractionRouting.closeRemoteScreen(player);
+    }
+
+    @Inject(method = "onDisconnected", at = @At("HEAD"))
+    private void largerworld$forgetDisconnectedPlayer(
+            net.minecraft.network.DisconnectionInfo info, CallbackInfo ci) {
+        CellViewTracker.forget(player);
     }
 
     @Redirect(

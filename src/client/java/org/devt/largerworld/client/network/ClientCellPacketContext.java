@@ -151,21 +151,25 @@ public final class ClientCellPacketContext {
     }
 
     private static int blockX(int localX, Mapping mapping) {
+        long cellDelta = Math.subtractExact(mapping.source().x(), mapping.origin().x());
         return Math.toIntExact(Math.addExact((long) localX,
-                Math.multiplyExact(mapping.source().x() - mapping.origin().x(), VirtualPosition.CELL_SIZE)));
+                Math.multiplyExact(cellDelta, VirtualPosition.CELL_SIZE)));
     }
 
     private static int blockZ(int localZ, Mapping mapping) {
+        long cellDelta = Math.subtractExact(mapping.source().z(), mapping.origin().z());
         return Math.toIntExact(Math.addExact((long) localZ,
-                Math.multiplyExact(mapping.source().z() - mapping.origin().z(), VirtualPosition.CELL_SIZE)));
+                Math.multiplyExact(cellDelta, VirtualPosition.CELL_SIZE)));
     }
 
     private static double positionX(double localX, Mapping mapping) {
-        return localX + (mapping.source().x() - mapping.origin().x()) * (double) VirtualPosition.CELL_SIZE;
+        return localX + ((double) mapping.source().x() - (double) mapping.origin().x())
+                * (double) VirtualPosition.CELL_SIZE;
     }
 
     private static double positionZ(double localZ, Mapping mapping) {
-        return localZ + (mapping.source().z() - mapping.origin().z()) * (double) VirtualPosition.CELL_SIZE;
+        return localZ + ((double) mapping.source().z() - (double) mapping.origin().z())
+                * (double) VirtualPosition.CELL_SIZE;
     }
 
     private static Mapping activeMapping() {

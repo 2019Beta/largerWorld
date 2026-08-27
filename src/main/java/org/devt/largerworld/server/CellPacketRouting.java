@@ -204,7 +204,9 @@ public final class CellPacketRouting {
 
     public static double clientToLocalX(ServerPlayerEntity player, double clientX) {
         CellPos current = currentWorldCell(player);
-        return clientX - (current.x() - origin(player).x()) * (double) VirtualPosition.CELL_SIZE;
+        CellPos origin = origin(player);
+        return clientX - ((double) current.x() - (double) origin.x())
+                * (double) VirtualPosition.CELL_SIZE;
     }
 
     /**
@@ -229,7 +231,9 @@ public final class CellPacketRouting {
 
     public static double clientToLocalZ(ServerPlayerEntity player, double clientZ) {
         CellPos current = currentWorldCell(player);
-        return clientZ - (current.z() - origin(player).z()) * (double) VirtualPosition.CELL_SIZE;
+        CellPos origin = origin(player);
+        return clientZ - ((double) current.z() - (double) origin.z())
+                * (double) VirtualPosition.CELL_SIZE;
     }
 
     public static BlockPos clientToLocal(ServerPlayerEntity player, BlockPos clientPos) {

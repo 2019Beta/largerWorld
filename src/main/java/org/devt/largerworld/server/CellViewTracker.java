@@ -55,6 +55,14 @@ public final class CellViewTracker {
         }
     }
 
+    /** Releases shadow listeners and per-player routing state immediately on disconnect. */
+    public static void forget(ServerPlayerEntity player) {
+        PlayerState state = STATES.remove(player.getUuid());
+        if (state != null) {
+            state.releaseAll();
+        }
+    }
+
     private static void updatePlayer(MinecraftServer server, ServerPlayerEntity player) {
         PlayerState state = STATES.computeIfAbsent(player.getUuid(), ignored -> new PlayerState(player));
         state.player = player;
@@ -227,10 +235,12 @@ public final class CellViewTracker {
                 continue;
             }
             CellPos playerCell = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
-            double dx = x + (sourceCell.x() - playerCell.x()) * (double) org.devt.largerworld.coordinate.VirtualPosition.CELL_SIZE
+            double dx = x + ((double) sourceCell.x() - (double) playerCell.x())
+                    * (double) org.devt.largerworld.coordinate.VirtualPosition.CELL_SIZE
                     - player.getX();
             double dy = y - player.getY();
-            double dz = z + (sourceCell.z() - playerCell.z()) * (double) org.devt.largerworld.coordinate.VirtualPosition.CELL_SIZE
+            double dz = z + ((double) sourceCell.z() - (double) playerCell.z())
+                    * (double) org.devt.largerworld.coordinate.VirtualPosition.CELL_SIZE
                     - player.getZ();
             if (dx * dx + dy * dy + dz * dz < squaredRange) {
                 CellPacketRouting.sendFrom(player, sourceWorld, packet);

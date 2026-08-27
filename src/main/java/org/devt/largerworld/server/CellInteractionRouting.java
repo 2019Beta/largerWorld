@@ -28,7 +28,7 @@ import org.jspecify.annotations.Nullable;
 public final class CellInteractionRouting {
     private static final ThreadLocal<Boolean> REROUTING = ThreadLocal.withInitial(() -> false);
     private static final Map<UUID, ServerWorld> REMOTE_MINING_WORLDS = new HashMap<>();
-    private static final Map<UUID, ServerWorld> REMOTE_SCREEN_WORLDS = new HashMap<>();
+    private static final Map<UUID, RemoteScreen> REMOTE_SCREEN_WORLDS = new HashMap<>();
 
     private CellInteractionRouting() {
     }
@@ -88,8 +88,15 @@ public final class CellInteractionRouting {
                 hit.isAgainstWorldBorder());
         PlayerInteractBlockC2SPacket translated = new PlayerInteractBlockC2SPacket(
                 packet.getHand(), translatedHit, packet.getSequence());
+        ScreenHandler previousScreen = handler.player.currentScreenHandler;
         runInWorld(handler.player, target.world, () -> handler.onPlayerInteractBlock(translated));
-        REMOTE_SCREEN_WORLDS.put(handler.player.getUuid(), target.world);
+        ScreenHandler openedScreen = handler.player.currentScreenHandler;
+        if (openedScreen != previousScreen) {
+            REMOTE_SCREEN_WORLDS.put(
+                    handler.player.getUuid(), new RemoteScreen(target.world, openedScreen));
+        } else {
+            REMOTE_SCREEN_WORLDS.remove(handler.player.getUuid());
+        }
         return true;
     }
 
@@ -116,12 +123,24 @@ public final class CellInteractionRouting {
         REMOTE_SCREEN_WORLDS.remove(player.getUuid());
     }
 
+    /** Prevents eviction while a remote mining operation or screen still owns a world reference. */
+    public static boolean isWorldInUse(ServerWorld world) {
+        return REMOTE_MINING_WORLDS.containsValue(world)
+                || REMOTE_SCREEN_WORLDS.values().stream()
+                .anyMatch(remote -> remote.world() == world);
+    }
+
     public static boolean canUseScreen(ServerPlayerEntity player, ScreenHandler handler) {
-        ServerWorld target = REMOTE_SCREEN_WORLDS.get(player.getUuid());
-        if (target == null || target == player.getEntityWorld()) {
-            if (target == player.getEntityWorld()) {
+        RemoteScreen remote = REMOTE_SCREEN_WORLDS.get(player.getUuid());
+        if (remote == null || remote.handler() != handler) {
+            if (remote != null) {
                 REMOTE_SCREEN_WORLDS.remove(player.getUuid());
             }
+            return handler.canUse(player);
+        }
+        ServerWorld target = remote.world();
+        if (target == player.getEntityWorld()) {
+            REMOTE_SCREEN_WORLDS.remove(player.getUuid());
             return handler.canUse(player);
         }
         boolean[] result = new boolean[1];
@@ -151,9 +170,11 @@ public final class CellInteractionRouting {
         CellPos origin = CellPacketRouting.origin(player);
         CellPos current = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
         double playerClientX = player.getX()
-                + (current.x() - origin.x()) * (double) VirtualPosition.CELL_SIZE;
+                + ((double) current.x() - (double) origin.x())
+                * (double) VirtualPosition.CELL_SIZE;
         double playerClientZ = player.getZ()
-                + (current.z() - origin.z()) * (double) VirtualPosition.CELL_SIZE;
+                + ((double) current.z() - (double) origin.z())
+                * (double) VirtualPosition.CELL_SIZE;
         double dx = clientPos.getX() - playerClientX;
         double dy = clientPos.getY() - player.getY();
         double dz = clientPos.getZ() - playerClientZ;
@@ -175,9 +196,11 @@ public final class CellInteractionRouting {
     private static Vec3d translateToCell(ServerPlayerEntity player, CellPos target, Vec3d clientPos) {
         CellPos origin = CellPacketRouting.origin(player);
         return new Vec3d(
-                clientPos.x - (target.x() - origin.x()) * (double) VirtualPosition.CELL_SIZE,
+                clientPos.x - ((double) target.x() - (double) origin.x())
+                        * (double) VirtualPosition.CELL_SIZE,
                 clientPos.y,
-                clientPos.z - (target.z() - origin.z()) * (double) VirtualPosition.CELL_SIZE);
+                clientPos.z - ((double) target.z() - (double) origin.z())
+                        * (double) VirtualPosition.CELL_SIZE);
     }
 
     private static boolean isBlockAction(PlayerActionC2SPacket.Action action) {
@@ -192,9 +215,11 @@ public final class CellInteractionRouting {
         CellPos originalCell = CellWorldKey.cell(originalWorld.getRegistryKey());
         CellPos targetCell = CellWorldKey.cell(targetWorld.getRegistryKey());
         Vec3d projectedPosition = new Vec3d(
-                originalPosition.x + (originalCell.x() - targetCell.x()) * (double) VirtualPosition.CELL_SIZE,
+                originalPosition.x + ((double) originalCell.x() - (double) targetCell.x())
+                        * (double) VirtualPosition.CELL_SIZE,
                 originalPosition.y,
-                originalPosition.z + (originalCell.z() - targetCell.z()) * (double) VirtualPosition.CELL_SIZE);
+                originalPosition.z + ((double) originalCell.z() - (double) targetCell.z())
+                        * (double) VirtualPosition.CELL_SIZE);
         boolean previous = REROUTING.get();
         REROUTING.set(true);
         player.setServerWorld(targetWorld);
@@ -209,5 +234,8 @@ public final class CellInteractionRouting {
     }
 
     private record BlockTarget(CellPos cell, ServerWorld world, BlockPos pos) {
+    }
+
+    private record RemoteScreen(ServerWorld world, ScreenHandler handler) {
     }
 }

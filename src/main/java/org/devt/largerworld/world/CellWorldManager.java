@@ -19,6 +19,7 @@ import net.minecraft.village.ZombieSiegeManager;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.mixin.MinecraftServerAccessor;
+import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellViewTracker;
 
 import java.io.IOException;
@@ -38,6 +39,13 @@ public final class CellWorldManager {
     public static ServerWorld getOrCreate(
             MinecraftServer server, RegistryKey<World> baseWorld, CellPos cell) {
         return getOrCreate(server, CellWorldKey.forCell(baseWorld, cell));
+    }
+
+    /** Returns a cell only when it is already active; behavior queries must not synchronously create worlds. */
+    public static synchronized ServerWorld getIfLoaded(
+            MinecraftServer server, RegistryKey<World> baseWorld, CellPos cell) {
+        MinecraftServerAccessor accessor = (MinecraftServerAccessor) server;
+        return accessor.largerworld$getWorldMap().get(CellWorldKey.forCell(baseWorld, cell));
     }
 
     public static synchronized ServerWorld getOrCreate(
@@ -95,7 +103,9 @@ public final class CellWorldManager {
             if (CellWorldKey.parse(key).isEmpty()) {
                 continue;
             }
-            if (!world.getPlayers().isEmpty() || CellViewTracker.isWorldWatched(world)) {
+            if (!world.getPlayers().isEmpty()
+                    || CellViewTracker.isWorldWatched(world)
+                    || CellInteractionRouting.isWorldInUse(world)) {
                 idle.remove(key);
                 continue;
             }

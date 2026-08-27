@@ -48,6 +48,14 @@ Players, mobs, items, projectiles and complete vehicle/passenger graphs migrate 
 one unit. Portals that temporarily place a player in a canonical base dimension are
 reconciled back to the same cell on the following server tick.
 
+Read-only block, fluid and block-entity queries that cross a seam are projected
+into an already loaded neighboring cell. This is used by collision rays and the
+bounded chunk view used for mob pathfinding. Entity distance, visibility and the
+standard active-target goal likewise use stitched coordinates for immediately
+adjacent cells, allowing an existing pursuit to continue across a seam and a mob
+near the seam to discover a target on the other side. These behavior bridges do
+not synchronously create cell worlds.
+
 ## Seamless client view mapping
 
 One cell contains 65536 chunks per axis. The server records the player's cell at
@@ -112,3 +120,9 @@ approximately 30-million-block safety range, the server rebases the origin to th
 target cell and uses one vanilla client-world reload to discard state mapped with
 the old origin. Async editors such as a sign opened across a seam before crossing
 are not yet remotely routed.
+
+Scheduled block/fluid ticks and arbitrary block writes are still owned by one
+backing `ServerWorld`; redstone, pistons, fluid flow and neighbor-update chains are
+not yet forwarded across a seam. Entity-area queries other than the standard mob
+active-target goal also remain world-local, so item merging and automatic pickup
+can wait until the item itself migrates into the player's cell.
