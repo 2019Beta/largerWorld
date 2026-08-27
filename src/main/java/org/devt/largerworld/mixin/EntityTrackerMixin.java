@@ -43,7 +43,14 @@ public abstract class EntityTrackerMixin implements CellEntityTracker {
     @Override
     public void largerworld$stopShadowTracking(ServerPlayerEntity player, boolean handedToVanilla) {
         largerworld$shadowListeners.remove(player.networkHandler);
-        if (!handedToVanilla && listeners.remove(player.networkHandler)) {
+        if (handedToVanilla) {
+            // A tracker that is itself becoming vanilla-owned must retain the
+            // listener. A replaced source-world tracker is orphaned, however;
+            // detach its listener silently so it cannot emit a late destroy.
+            if (entity.getEntityWorld() != player.getEntityWorld()) {
+                listeners.remove(player.networkHandler);
+            }
+        } else if (listeners.remove(player.networkHandler)) {
             entry.stopTracking(player);
         }
     }

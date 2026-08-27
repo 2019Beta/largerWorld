@@ -14,15 +14,59 @@ import net.minecraft.world.block.WireOrientation;
 import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.world.CellBoundaryAccess;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Predicate;
+
 
 /** Redirects read-only block queries crossing a cell seam to the loaded neighboring cell. */
 @Mixin(World.class)
 public abstract class WorldBoundaryMixin {
+    @Unique
+    private static final ThreadLocal<Boolean> largerworld$queryingNeighborEntities =
+            ThreadLocal.withInitial(() -> false);
+
+    @Inject(method = "getOtherEntities", at = @At("RETURN"), cancellable = true)
+    private void largerworld$getOtherEntitiesAcrossCell(
+            Entity except,
+            net.minecraft.util.math.Box box,
+            Predicate<? super Entity> predicate,
+            CallbackInfoReturnable<List<Entity>> cir) {
+        if (!((Object) this instanceof ServerWorld world)
+                || largerworld$queryingNeighborEntities.get()) {
+            return;
+        }
+
+        List<CellBoundaryAccess.ProjectedWorld> neighbors =
+                CellBoundaryAccess.loadedWorldsOverlapping(world, box);
+        if (neighbors.isEmpty()) {
+            return;
+        }
+        List<Entity> result = new ArrayList<>(cir.getReturnValue());
+        largerworld$queryingNeighborEntities.set(true);
+        try {
+            for (CellBoundaryAccess.ProjectedWorld neighbor : neighbors) {
+                for (Entity entity : neighbor.world().getOtherEntities(
+                        except != null && except.getEntityWorld() == neighbor.world() ? except : null,
+                        neighbor.localBox(),
+                        predicate)) {
+                    if (!result.contains(entity)) {
+                        result.add(entity);
+                    }
+                }
+            }
+        } finally {
+            largerworld$queryingNeighborEntities.set(false);
+        }
+        cir.setReturnValue(result);
+    }
+
     @Inject(method = "setBlockState(Lnet/minecraft/util/math/BlockPos;Lnet/minecraft/block/BlockState;II)Z",
             at = @At("HEAD"), cancellable = true)
     private void largerworld$setNeighborBlockState(

@@ -4,6 +4,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
+import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -12,12 +13,14 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
+import org.devt.largerworld.world.CellBoundaryAccess;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -27,7 +30,9 @@ import org.jspecify.annotations.Nullable;
 /** Routes interactions with visible neighboring-cell content to its backing world. */
 public final class CellInteractionRouting {
     private static final ThreadLocal<Boolean> REROUTING = ThreadLocal.withInitial(() -> false);
-    private static final Map<UUID, ServerWorld> REMOTE_MINING_WORLDS = new HashMap<>();
+    private static final ThreadLocal<Boolean> CLOSING_REMOTE_SCREEN =
+            ThreadLocal.withInitial(() -> false);
+    private static final Map<UUID, RemoteMining> REMOTE_MINING = new HashMap<>();
     private static final Map<UUID, RemoteScreen> REMOTE_SCREEN_WORLDS = new HashMap<>();
 
     private CellInteractionRouting() {
@@ -46,7 +51,7 @@ public final class CellInteractionRouting {
         ServerWorld current = handler.player.getEntityWorld();
         if (target.world == current) {
             if (packet.getAction() == PlayerActionC2SPacket.Action.START_DESTROY_BLOCK) {
-                REMOTE_MINING_WORLDS.remove(handler.player.getUuid());
+                REMOTE_MINING.remove(handler.player.getUuid());
             }
             return false;
         }
@@ -55,10 +60,12 @@ public final class CellInteractionRouting {
                 packet.getAction(), target.pos, packet.getDirection(), packet.getSequence());
         boolean keepMiningWorld = packet.getAction() == PlayerActionC2SPacket.Action.START_DESTROY_BLOCK;
         runInWorld(handler.player, target.world, () -> handler.onPlayerAction(translated));
-        if (keepMiningWorld) {
-            REMOTE_MINING_WORLDS.put(handler.player.getUuid(), target.world);
+        sendAuthoritativeBlockNeighborhood(handler.player, target.world, target.pos);
+        if (keepMiningWorld && !target.world.getBlockState(target.pos).isAir()) {
+            REMOTE_MINING.put(
+                    handler.player.getUuid(), new RemoteMining(target.world, target.pos));
         } else {
-            REMOTE_MINING_WORLDS.remove(handler.player.getUuid());
+            REMOTE_MINING.remove(handler.player.getUuid());
         }
         return true;
     }
@@ -110,7 +117,13 @@ public final class CellInteractionRouting {
         if (entity == null || !(entity.getEntityWorld() instanceof ServerWorld targetWorld)) {
             return false;
         }
+        ScreenHandler previousScreen = handler.player.currentScreenHandler;
         runInWorld(handler.player, targetWorld, () -> handler.onPlayerInteractEntity(packet));
+        ScreenHandler openedScreen = handler.player.currentScreenHandler;
+        if (openedScreen != previousScreen) {
+            REMOTE_SCREEN_WORLDS.put(
+                    handler.player.getUuid(), new RemoteScreen(targetWorld, openedScreen));
+        }
         return true;
     }
 
@@ -119,13 +132,13 @@ public final class CellInteractionRouting {
     }
 
     public static void forget(ServerPlayerEntity player) {
-        REMOTE_MINING_WORLDS.remove(player.getUuid());
+        REMOTE_MINING.remove(player.getUuid());
         REMOTE_SCREEN_WORLDS.remove(player.getUuid());
     }
 
     /** Prevents eviction while a remote mining operation or screen still owns a world reference. */
     public static boolean isWorldInUse(ServerWorld world) {
-        return REMOTE_MINING_WORLDS.containsValue(world)
+        return REMOTE_MINING.values().stream().anyMatch(remote -> remote.world() == world)
                 || REMOTE_SCREEN_WORLDS.values().stream()
                 .anyMatch(remote -> remote.world() == world);
     }
@@ -148,21 +161,49 @@ public final class CellInteractionRouting {
         return result[0];
     }
 
-    public static void closeRemoteScreen(ServerPlayerEntity player) {
-        REMOTE_SCREEN_WORLDS.remove(player.getUuid());
+    /** Closes a remote menu in the world in which it was opened. */
+    public static boolean closeRemoteScreen(ServerPlayerEntity player) {
+        if (CLOSING_REMOTE_SCREEN.get()) {
+            return false;
+        }
+        RemoteScreen remote = REMOTE_SCREEN_WORLDS.get(player.getUuid());
+        if (remote == null || remote.handler() != player.currentScreenHandler) {
+            if (remote != null) {
+                REMOTE_SCREEN_WORLDS.remove(player.getUuid());
+            }
+            return false;
+        }
+
+        CLOSING_REMOTE_SCREEN.set(true);
+        try {
+            runInWorld(player, remote.world(), player::onHandledScreenClosed);
+        } finally {
+            REMOTE_SCREEN_WORLDS.remove(player.getUuid());
+            CLOSING_REMOTE_SCREEN.set(false);
+        }
+        return true;
     }
 
     public static void updateInteractionManager(
             ServerPlayerEntity player, ServerPlayerInteractionManager interactionManager) {
-        ServerWorld target = REMOTE_MINING_WORLDS.get(player.getUuid());
-        if (target == null || target == player.getEntityWorld()) {
-            if (target == player.getEntityWorld()) {
-                REMOTE_MINING_WORLDS.remove(player.getUuid());
+        RemoteMining remote = REMOTE_MINING.get(player.getUuid());
+        if (remote == null || remote.world() == player.getEntityWorld()) {
+            if (remote != null) {
+                REMOTE_MINING.remove(player.getUuid());
             }
             interactionManager.update();
             return;
         }
-        runInWorld(player, target, interactionManager::update);
+        var before = remote.world().getBlockState(remote.pos());
+        runInWorld(player, remote.world(), interactionManager::update);
+        var after = remote.world().getBlockState(remote.pos());
+        if (!before.equals(after)) {
+            sendAuthoritativeBlockNeighborhood(
+                    player, remote.world(), remote.pos());
+        }
+        if (after.isAir()) {
+            REMOTE_MINING.remove(player.getUuid());
+        }
     }
 
     private static @Nullable BlockTarget blockTarget(
@@ -209,6 +250,34 @@ public final class CellInteractionRouting {
                 || action == PlayerActionC2SPacket.Action.ABORT_DESTROY_BLOCK;
     }
 
+    /**
+     * Vanilla successful mining has no direct acknowledgement packet and relies
+     * on the current world's chunk watcher. A neighboring cell is watched by our
+     * shadow tracker, so send the authoritative result explicitly. Neighbors are
+     * included because breaking one half of a double chest changes the other half.
+     */
+    private static void sendAuthoritativeBlockNeighborhood(
+            ServerPlayerEntity player, ServerWorld world, BlockPos pos) {
+        sendAuthoritativeBlock(player, world, pos);
+        for (Direction direction : Direction.values()) {
+            sendAuthoritativeBlock(player, world, pos.offset(direction));
+        }
+    }
+
+    private static void sendAuthoritativeBlock(
+            ServerPlayerEntity player, ServerWorld source, BlockPos sourcePos) {
+        var resolved = CellBoundaryAccess.resolveLoadedBlock(source, sourcePos);
+        if (resolved.isPresent()) {
+            CellBoundaryAccess.ResolvedBlock target = resolved.get();
+            CellPacketRouting.sendFrom(player, target.world(),
+                    new BlockUpdateS2CPacket(
+                            target.pos(), target.world().getBlockState(target.pos())));
+            return;
+        }
+        CellPacketRouting.sendFrom(player, source,
+                new BlockUpdateS2CPacket(sourcePos, source.getBlockState(sourcePos)));
+    }
+
     private static void runInWorld(ServerPlayerEntity player, ServerWorld targetWorld, Runnable action) {
         ServerWorld originalWorld = player.getEntityWorld();
         Vec3d originalPosition = player.getEntityPos();
@@ -222,11 +291,14 @@ public final class CellInteractionRouting {
                         * (double) VirtualPosition.CELL_SIZE);
         boolean previous = REROUTING.get();
         REROUTING.set(true);
+        ServerPlayerInteractionManager interactionManager = player.interactionManager;
         player.setServerWorld(targetWorld);
         player.setPosition(projectedPosition);
+        interactionManager.setWorld(targetWorld);
         try {
             CellPacketRouting.withSource(targetWorld, action);
         } finally {
+            interactionManager.setWorld(originalWorld);
             player.setServerWorld(originalWorld);
             player.setPosition(originalPosition);
             REROUTING.set(previous);
@@ -234,6 +306,9 @@ public final class CellInteractionRouting {
     }
 
     private record BlockTarget(CellPos cell, ServerWorld world, BlockPos pos) {
+    }
+
+    private record RemoteMining(ServerWorld world, BlockPos pos) {
     }
 
     private record RemoteScreen(ServerWorld world, ScreenHandler handler) {

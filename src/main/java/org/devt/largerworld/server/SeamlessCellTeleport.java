@@ -1,5 +1,6 @@
 package org.devt.largerworld.server;
 
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityPosition;
 import net.minecraft.network.packet.s2c.play.PositionFlag;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -10,29 +11,42 @@ import org.devt.largerworld.mixin.EntityAccessor;
 import org.devt.largerworld.mixin.TeleportTargetAccessor;
 import org.devt.largerworld.world.CellWorldKey;
 
+import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /** Performs a cell-to-cell player move without sending a dimension respawn. */
 public final class SeamlessCellTeleport {
     private static final ThreadLocal<Boolean> CONTINUOUS_MOVEMENT =
             ThreadLocal.withInitial(() -> false);
+    private static final ThreadLocal<Set<Integer>> CONTINUOUS_ENTITIES =
+            ThreadLocal.withInitial(Set::of);
 
     private SeamlessCellTeleport() {
     }
 
     /** Runs a boundary crossing whose final client-space position is unchanged. */
-    public static <T> T withContinuousMovement(Supplier<T> action) {
+    public static <T> T withContinuousMovement(Entity root, Supplier<T> action) {
         boolean previous = CONTINUOUS_MOVEMENT.get();
+        Set<Integer> previousEntities = CONTINUOUS_ENTITIES.get();
         CONTINUOUS_MOVEMENT.set(true);
+        CONTINUOUS_ENTITIES.set(root.streamSelfAndPassengers()
+                .map(Entity::getId)
+                .collect(Collectors.toUnmodifiableSet()));
         try {
             return action.get();
         } finally {
             CONTINUOUS_MOVEMENT.set(previous);
+            CONTINUOUS_ENTITIES.set(previousEntities);
         }
     }
 
     public static boolean isContinuousMovement() {
         return CONTINUOUS_MOVEMENT.get();
+    }
+
+    public static boolean isTransitionEntity(int entityId) {
+        return CONTINUOUS_MOVEMENT.get() && CONTINUOUS_ENTITIES.get().contains(entityId);
     }
 
     public static ServerPlayerEntity teleport(ServerPlayerEntity player, TeleportTarget target) {

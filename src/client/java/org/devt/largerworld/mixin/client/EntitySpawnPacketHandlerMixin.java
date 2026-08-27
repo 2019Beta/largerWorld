@@ -6,14 +6,10 @@ import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
 import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.client.network.ClientCellPacketContext;
-import org.devt.largerworld.client.network.ClientEntityHandoff;
-import it.unimi.dsi.fastutil.ints.IntConsumer;
-import it.unimi.dsi.fastutil.ints.IntList;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.HashMap;
@@ -30,10 +26,18 @@ public abstract class EntitySpawnPacketHandlerMixin {
     @Inject(method = "onEntitySpawn", at = @At("HEAD"), cancellable = true)
     private void largerworld$ignoreDuplicateSpawn(EntitySpawnS2CPacket packet, CallbackInfo ci) {
         ClientWorld world = ((ClientPlayNetworkHandler) (Object) this).getWorld();
-        if ((ClientCellPacketContext.isApplyingCellPacket()
-                || ClientEntityHandoff.isActive(packet.getEntityId()))
-                && world != null
-                && world.getEntityById(packet.getEntityId()) != null) {
+        net.minecraft.entity.Entity existing = world == null
+                ? null : world.getEntityById(packet.getEntityId());
+        // Shadow tracking and destination tracking can legitimately announce
+        // the same UUID twice. Only suppress that exact duplicate. An ID match
+        // by itself is not sufficient: cancelling a different UUID leaves the
+        // client with stale entities and can corrupt later tracking updates.
+        if (ClientCellPacketContext.isApplyingCellPacket()
+                && existing != null
+                && existing.getUuid().equals(packet.getUuid())) {
+            Largerworld.LOGGER.info(
+                    "[cell-transition] CLIENT_KEEP_SPAWN entityId={}",
+                    packet.getEntityId());
             ci.cancel();
         }
     }
@@ -50,13 +54,6 @@ public abstract class EntitySpawnPacketHandlerMixin {
         }
 
         ClientWorld world = ((ClientPlayNetworkHandler) (Object) this).getWorld();
-        if (ClientEntityHandoff.isActive(packet.getEntityId())) {
-            Largerworld.LOGGER.info(
-                    "[cell-transition] CLIENT_KEEP_PASSENGERS entityId={} passengers={}",
-                    packet.getEntityId(), Arrays.toString(packet.getPassengerIds()));
-            ci.cancel();
-            return;
-        }
         if (ClientCellPacketContext.isApplyingCellPacket()
                 && (world == null || world.getEntityById(packet.getEntityId()) == null)) {
             largerworld$pendingPassengers.put(packet.getEntityId(), packet);
@@ -64,23 +61,6 @@ public abstract class EntitySpawnPacketHandlerMixin {
                     "[cell-transition] CLIENT_DEFER_PASSENGERS entityId={} passengers={}",
                     packet.getEntityId(), Arrays.toString(packet.getPassengerIds()));
             ci.cancel();
-        }
-    }
-
-    @Redirect(
-            method = "onEntitiesDestroy",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lit/unimi/dsi/fastutil/ints/IntList;forEach(Lit/unimi/dsi/fastutil/ints/IntConsumer;)V"))
-    private void largerworld$preserveHandoffEntities(
-            IntList entityIds, IntConsumer removeEntity) {
-        for (int entityId : entityIds) {
-            if (ClientEntityHandoff.preserveDestroy(entityId)) {
-                Largerworld.LOGGER.info(
-                        "[cell-transition] CLIENT_KEEP_ENTITY entityId={}", entityId);
-            } else {
-                removeEntity.accept(entityId);
-            }
         }
     }
 

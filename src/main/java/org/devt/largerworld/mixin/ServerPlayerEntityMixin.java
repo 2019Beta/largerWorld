@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import net.minecraft.server.network.ServerPlayerInteractionManager;
 import net.minecraft.screen.ScreenHandler;
@@ -31,6 +32,14 @@ public abstract class ServerPlayerEntityMixin {
     private boolean largerworld$keepRemoteScreenOpen(ScreenHandler handler, PlayerEntity player) {
         return CellInteractionRouting.canUseScreen((ServerPlayerEntity) (Object) this, handler);
     }
+
+    @Inject(method = "onHandledScreenClosed", at = @At("HEAD"), cancellable = true)
+    private void largerworld$closeRemoteScreenInItsWorld(CallbackInfo ci) {
+        if (CellInteractionRouting.closeRemoteScreen((ServerPlayerEntity) (Object) this)) {
+            ci.cancel();
+        }
+    }
+
     @Inject(method = "teleportTo", at = @At("HEAD"), cancellable = true)
     private void largerworld$seamlessCellTeleport(
             TeleportTarget target, CallbackInfoReturnable<ServerPlayerEntity> cir) {

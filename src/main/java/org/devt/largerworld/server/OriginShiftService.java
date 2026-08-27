@@ -9,7 +9,6 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
-import net.minecraft.network.packet.s2c.common.CustomPayloadS2CPacket;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -20,7 +19,6 @@ import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
 import org.devt.largerworld.mixin.ServerPlayNetworkHandlerAccessor;
-import org.devt.largerworld.network.EntityHandoffPayload;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,7 +27,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Iterator;
-import java.util.List;
 
 /** Migrates complete entity/passenger graphs between independently stored cell worlds. */
 public final class OriginShiftService {
@@ -158,6 +155,10 @@ public final class OriginShiftService {
             return false;
         }
         boolean debugTransition = continuousMovement && root.hasPassengers();
+        boolean clientControlledRoot = continuousMovement
+                && root.streamSelfAndPassengers().anyMatch(
+                        member -> member instanceof ServerPlayerEntity player
+                                && player.hasVehicle());
         if (debugTransition) {
             logGraph("BEGIN", root);
         }
@@ -186,32 +187,11 @@ public final class OriginShiftService {
                 root.getPitch(),
                 TeleportTarget.NO_OP);
         Entity[] result = new Entity[1];
-        List<ServerPlayerEntity> handoffPlayers = continuousMovement && root.hasPassengers()
-                ? root.streamSelfAndPassengers()
-                        .filter(member -> member instanceof ServerPlayerEntity player
-                                && player.hasVehicle())
-                        .map(member -> (ServerPlayerEntity) member)
-                        .toList()
-                : List.of();
-        for (ServerPlayerEntity player : handoffPlayers) {
-            CellPacketRouting.sendFrom(
-                    player,
-                    sourceWorld,
-                    new CustomPayloadS2CPacket(
-                            new EntityHandoffPayload(root.getId(), true)));
-        }
         CellPacketRouting.withSource(targetWorld, () -> result[0] = continuousMovement
-                ? SeamlessCellTeleport.withContinuousMovement(() -> root.teleportTo(target))
+                ? SeamlessCellTeleport.withContinuousMovement(root, () -> root.teleportTo(target))
                 : root.teleportTo(target));
         Entity teleportedRoot = result[0];
         if (teleportedRoot == null) {
-            for (ServerPlayerEntity player : handoffPlayers) {
-                CellPacketRouting.sendFrom(
-                        player,
-                        player.getEntityWorld(),
-                        new CustomPayloadS2CPacket(
-                                new EntityHandoffPayload(root.getId(), false)));
-            }
             if (debugTransition) {
                 Largerworld.LOGGER.warn("[cell-transition] FAILED rootUuid={} targetCell={}",
                         root.getUuid(), targetCell);
@@ -243,7 +223,9 @@ public final class OriginShiftService {
             Vec3d velocity = velocities.get(member.getUuid());
             if (velocity != null) {
                 member.setVelocity(velocity);
-                if (!(member instanceof ServerPlayerEntity)) {
+                if (!(member instanceof ServerPlayerEntity)
+                        && !(clientControlledRoot
+                        && member.getUuid().equals(teleportedRoot.getUuid()))) {
                     member.velocityDirty = true;
                 }
             }
@@ -300,7 +282,8 @@ public final class OriginShiftService {
         // Entity tracking may start in the destination before its passenger
         // entities have spawned on the client. Send the final relation only
         // after the whole graph and the vehicle validation baselines are ready.
-        // The client-side handoff queue handles the remaining packet-order race.
+        // Client packet handling queues this relation when the destination
+        // entity spawn has not arrived yet.
         if (teleportedRoot.hasPassengers()) {
             EntityPassengersSetS2CPacket passengers =
                     new EntityPassengersSetS2CPacket(teleportedRoot);
@@ -315,13 +298,6 @@ public final class OriginShiftService {
                     teleportedRoot.getZ(),
                     256.0,
                     passengers);
-        }
-        for (ServerPlayerEntity player : handoffPlayers) {
-            CellPacketRouting.sendFrom(
-                    player,
-                    targetWorld,
-                    new CustomPayloadS2CPacket(
-                            new EntityHandoffPayload(teleportedRoot.getId(), false)));
         }
         return true;
     }
@@ -385,4 +361,5 @@ public final class OriginShiftService {
 
     private record DebugProbe(Entity root, Set<UUID> memberUuids, int remainingTicks) {
     }
+
 }

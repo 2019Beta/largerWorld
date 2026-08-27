@@ -104,16 +104,26 @@ public abstract class ServerPlayNetworkHandlerMixin {
         }
     }
 
-    @Inject(method = "onCloseHandledScreen", at = @At("HEAD"))
-    private void largerworld$closeRemoteScreen(
-            net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket packet,
-            CallbackInfo ci) {
-        CellInteractionRouting.closeRemoteScreen(player);
+    @Redirect(
+            method = {
+                    "onRenameItem",
+                    "onUpdateBeacon",
+                    "onSelectMerchantTrade",
+                    "onClickSlot",
+                    "onCraftRequest",
+                    "onButtonClick"
+            },
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/screen/ScreenHandler;canUse(Lnet/minecraft/entity/player/PlayerEntity;)Z"))
+    private boolean largerworld$useRemoteScreen(
+            net.minecraft.screen.ScreenHandler handler,
+            net.minecraft.entity.player.PlayerEntity ignoredPlayer) {
+        return CellInteractionRouting.canUseScreen(player, handler);
     }
 
     @Inject(method = "onDisconnected", at = @At("HEAD"))
     private void largerworld$forgetDisconnectedPlayer(
             net.minecraft.network.DisconnectionInfo info, CallbackInfo ci) {
+        CellInteractionRouting.closeRemoteScreen(player);
         CellViewTracker.forget(player);
     }
 

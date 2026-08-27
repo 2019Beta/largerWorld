@@ -2,7 +2,6 @@ package org.devt.largerworld.client;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
@@ -10,9 +9,7 @@ import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.client.network.ClientCellPacketContext;
-import org.devt.largerworld.client.network.ClientEntityHandoff;
 import org.devt.largerworld.network.CellPacketPayload;
-import org.devt.largerworld.network.EntityHandoffPayload;
 
 import java.util.Locale;
 
@@ -24,10 +21,6 @@ public class LargerworldClient implements ClientModInitializer {
     public void onInitializeClient() {
         ClientPlayNetworking.registerGlobalReceiver(CellPacketPayload.ID,
                 (payload, context) -> ClientCellPacketContext.apply(payload, context.client().getNetworkHandler()));
-        ClientPlayNetworking.registerGlobalReceiver(EntityHandoffPayload.ID,
-                (payload, context) -> ClientEntityHandoff.update(
-                        payload.entityId(), payload.begin()));
-        ClientTickEvents.END_CLIENT_TICK.register(client -> ClientEntityHandoff.tick());
         HudElementRegistry.addLast(
                 Identifier.of(Largerworld.MOD_ID, "global_coordinates"),
                 (context, tickCounter) -> {

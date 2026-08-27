@@ -9,7 +9,6 @@ import net.minecraft.util.Identifier;
 import org.devt.largerworld.command.LargerWorldCommands;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.network.CellPacketPayload;
-import org.devt.largerworld.network.EntityHandoffPayload;
 import org.devt.largerworld.server.OriginShiftService;
 import org.devt.largerworld.server.CellViewTracker;
 import org.devt.largerworld.server.CellChunkTickets;
@@ -36,7 +35,6 @@ public class Largerworld implements ModInitializer {
     @Override
     public void onInitialize() {
         CellPacketPayload.register();
-        EntityHandoffPayload.register();
         CellChunkTickets.register();
         LargerWorldCommands.register();
         ServerTickEvents.START_SERVER_TICK.register(OriginShiftService::reconcilePlayerWorlds);

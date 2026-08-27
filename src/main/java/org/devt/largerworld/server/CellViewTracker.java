@@ -396,6 +396,24 @@ public final class CellViewTracker {
                             CellWorldKey.cell(player.getEntityWorld().getRegistryKey()),
                             entity.getChunkPos());
                     if (!handedToVanilla) {
+                        // After a cell migration the replacement tracker belongs
+                        // to the player's current (vanilla-managed) world, so it
+                        // is intentionally absent from the shadow `desired` set.
+                        // Match it directly before retiring the source tracker;
+                        // otherwise the old tracker sends a late destroy packet
+                        // after the destination entity has already taken over.
+                        Entity replacement = player.getEntityWorld()
+                                .getEntityById(entity.getId());
+                        handedToVanilla = replacement != null
+                                && !replacement.isRemoved()
+                                && replacement.getUuid().equals(entity.getUuid());
+                        if (handedToVanilla) {
+                            org.devt.largerworld.Largerworld.LOGGER.info(
+                                    "[cell-transition] TRACKER_HANDOFF entityId={} uuid={}",
+                                    entity.getId(), entity.getUuid());
+                        }
+                    }
+                    if (!handedToVanilla) {
                         handedToVanilla = desired.stream().anyMatch(replacement -> {
                             Entity replacementEntity = replacement.largerworld$getEntity();
                             return replacementEntity.getId() == entity.getId()
