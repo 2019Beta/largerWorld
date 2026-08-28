@@ -191,7 +191,11 @@ public final class OriginShiftService {
             // Only a ridden graph needs an identity bridge on the client. An
             // ordinary projectile or mob must complete the normal destroy/spawn
             // lifecycle; retaining both sides is visible as a duplicate entity.
-            announceClientHandoff(sourceWorld, targetCell, sourceMembers);
+            sendClientHandoff(
+                    EntityHandoffPayload.Phase.BEGIN,
+                    sourceWorld,
+                    targetCell,
+                    sourceMembers);
         }
 
         TeleportTarget target = new TeleportTarget(
@@ -308,34 +312,55 @@ public final class OriginShiftService {
             handler.largerworld$setVehicleFloatingTicks(0);
         }
 
-        // Entity tracking may start in the destination before its passenger
-        // entities have spawned on the client. Send the final relation only
-        // after the whole graph and the vehicle validation baselines are ready.
-        // Client packet handling queues this relation when the destination
-        // entity spawn has not arrived yet.
-        if (teleportedRoot.hasPassengers()) {
+        if (playerControlledGraph) {
+            // The rebuilt graph and vehicle validation baselines are now final.
+            // COMMIT is the authoritative transition signal because a shadow
+            // tracker can hand ownership to the destination without spawning a
+            // replacement entity on the client.
+            sendClientHandoff(
+                    EntityHandoffPayload.Phase.COMMIT,
+                    targetWorld,
+                    CellWorldKey.cell(sourceWorld.getRegistryKey()),
+                    targetMembers);
+        }
+
+        // Send a final relation for every vehicle in the graph, not only the
+        // root, so nested mounts are committed as one coherent snapshot. These
+        // packets are deliberately ordered after COMMIT on each connection.
+        for (Entity vehicle : targetMembers) {
+            if (!vehicle.hasPassengers()) {
+                continue;
+            }
             EntityPassengersSetS2CPacket passengers =
-                    new EntityPassengersSetS2CPacket(teleportedRoot);
+                    new EntityPassengersSetS2CPacket(vehicle);
             CellPacketRouting.withSource(targetWorld, () ->
                     targetWorld.getChunkManager()
-                            .sendToNearbyPlayers(teleportedRoot, passengers));
+                            .sendToNearbyPlayers(vehicle, passengers));
             CellViewTracker.sendToShadowPlayers(
                     targetWorld,
                     null,
-                    teleportedRoot.getX(),
-                    teleportedRoot.getY(),
-                    teleportedRoot.getZ(),
+                    vehicle.getX(),
+                    vehicle.getY(),
+                    vehicle.getZ(),
                     256.0,
                     passengers);
         }
         return true;
     }
 
-    private static void announceClientHandoff(
-            ServerWorld sourceWorld, CellPos targetCell, List<Entity> members) {
-        CellPos sourceCell = CellWorldKey.cell(sourceWorld.getRegistryKey());
+    private static void sendClientHandoff(
+            EntityHandoffPayload.Phase phase,
+            ServerWorld sendingWorld,
+            CellPos otherCell,
+            List<Entity> members) {
+        CellPos sendingCell = CellWorldKey.cell(sendingWorld.getRegistryKey());
+        CellPos sourceCell = phase == EntityHandoffPayload.Phase.BEGIN
+                ? sendingCell : otherCell;
+        CellPos targetCell = phase == EntityHandoffPayload.Phase.BEGIN
+                ? otherCell : sendingCell;
         for (Entity member : members) {
             var packet = new CustomPayloadS2CPacket(new EntityHandoffPayload(
+                    phase,
                     member.getId(),
                     member.getUuid(),
                     sourceCell,
@@ -345,7 +370,17 @@ public final class OriginShiftService {
             // sendToNearbyPlayers also includes the entity itself when it is a
             // player. One ordered send therefore reaches every client that can
             // already have this entity without duplicating the marker.
-            sourceWorld.getChunkManager().sendToNearbyPlayers(member, packet);
+            sendingWorld.getChunkManager().sendToNearbyPlayers(member, packet);
+            if (phase == EntityHandoffPayload.Phase.COMMIT) {
+                CellViewTracker.sendToShadowPlayers(
+                        sendingWorld,
+                        null,
+                        member.getX(),
+                        member.getY(),
+                        member.getZ(),
+                        256.0,
+                        packet);
+            }
         }
     }
 

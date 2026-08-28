@@ -5,6 +5,7 @@ import net.minecraft.network.packet.c2s.play.VehicleMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
+import net.minecraft.network.packet.c2s.play.PickItemFromBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.JigsawGeneratingC2SPacket;
 import net.minecraft.network.packet.c2s.play.SetTestBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.TestInstanceBlockActionC2SPacket;
@@ -57,6 +58,17 @@ public abstract class ServerPlayNetworkHandlerMixin {
         var server = player.getEntityWorld().getServer();
         if (server.isOnThread() && CellInteractionRouting.rerouteEntityInteraction(
                 (ServerPlayNetworkHandler) (Object) this, packet)) {
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "onPickItemFromBlock", at = @At("HEAD"), cancellable = true)
+    private void largerworld$routePickItemFromBlock(PickItemFromBlockC2SPacket packet, CallbackInfo ci) {
+        var handler = (ServerPlayNetworkHandler) (Object) this;
+        var server = player.getEntityWorld().getServer();
+        if (server.isOnThread() && CellInteractionRouting.rerouteBlockPacket(
+                server, handler, packet.pos(), pos -> handler.onPickItemFromBlock(
+                        new PickItemFromBlockC2SPacket(pos, packet.includeData())))) {
             ci.cancel();
         }
     }
@@ -209,5 +221,14 @@ public abstract class ServerPlayNetworkHandlerMixin {
         return CellInteractionRouting.isRerouting()
                 ? packet.getBlockHitResult()
                 : CellPacketRouting.clientToLocal(player, packet.getBlockHitResult());
+    }
+
+    @Redirect(
+            method = "onPickItemFromBlock",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/network/packet/c2s/play/PickItemFromBlockC2SPacket;pos()Lnet/minecraft/util/math/BlockPos;"))
+    private BlockPos largerworld$pickItemBlockPos(PickItemFromBlockC2SPacket packet) {
+        return CellInteractionRouting.isRerouting()
+                ? packet.pos()
+                : CellPacketRouting.clientToLocal(player, packet.pos());
     }
 }

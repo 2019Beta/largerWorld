@@ -12,21 +12,29 @@ import java.util.UUID;
 
 /** Bridges one player-ridden entity graph between source and target trackers. */
 public record EntityHandoffPayload(
+        Phase phase,
         int entityId,
         UUID entityUuid,
         CellPos sourceCell,
         CellPos targetCell) implements CustomPayload {
+    public enum Phase {
+        BEGIN,
+        COMMIT
+    }
+
     public static final Id<EntityHandoffPayload> ID =
             new Id<>(Identifier.of(Largerworld.MOD_ID, "entity_handoff"));
 
     public static final PacketCodec<RegistryByteBuf, EntityHandoffPayload> CODEC = PacketCodec.of(
             (payload, buf) -> {
+                buf.writeEnumConstant(payload.phase());
                 buf.writeVarInt(payload.entityId());
                 buf.writeUuid(payload.entityUuid());
                 CellPos.PACKET_CODEC.encode(buf, payload.sourceCell());
                 CellPos.PACKET_CODEC.encode(buf, payload.targetCell());
             },
             buf -> new EntityHandoffPayload(
+                    buf.readEnumConstant(Phase.class),
                     buf.readVarInt(),
                     buf.readUuid(),
                     CellPos.PACKET_CODEC.decode(buf),

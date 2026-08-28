@@ -24,7 +24,7 @@ public class LargerworldClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(CellPacketPayload.ID,
                 (payload, context) -> ClientCellPacketContext.apply(payload, context.client().getNetworkHandler()));
         ClientPlayNetworking.registerGlobalReceiver(EntityHandoffPayload.ID,
-                (payload, context) -> ClientEntityHandoff.begin(payload));
+                (payload, context) -> ClientEntityHandoff.accept(payload));
         HudElementRegistry.addLast(
                 Identifier.of(Largerworld.MOD_ID, "global_coordinates"),
                 (context, tickCounter) -> {
