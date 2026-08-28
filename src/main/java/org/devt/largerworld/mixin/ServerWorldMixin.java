@@ -5,6 +5,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.fluid.Fluid;
 import net.minecraft.network.packet.s2c.play.BlockBreakingProgressS2CPacket;
+import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.ParticleS2CPacket;
 import net.minecraft.particle.ParticleEffect;
 import net.minecraft.server.world.ServerWorld;
@@ -26,6 +27,21 @@ import java.util.function.BooleanSupplier;
 
 @Mixin(ServerWorld.class)
 public abstract class ServerWorldMixin {
+    @Inject(method = "updateListeners", at = @At("RETURN"))
+    private void largerworld$sendBlockUpdateAcrossCells(
+            BlockPos pos, BlockState oldState, BlockState newState, int flags, CallbackInfo ci) {
+        if ((flags & Block.NOTIFY_LISTENERS) == 0 || oldState.equals(newState)) {
+            return;
+        }
+
+        ServerWorld world = (ServerWorld) (Object) this;
+        // Shadow clients do not belong to this world's vanilla watcher list;
+        // send the same authoritative state to every shadow chunk watcher.
+        CellViewTracker.sendToShadowPlayers(
+                world, null, pos.getX(), pos.getY(), pos.getZ(), Double.POSITIVE_INFINITY,
+                new BlockUpdateS2CPacket(pos, newState));
+    }
+
     @Inject(method = "getBlockTickScheduler()Lnet/minecraft/world/tick/WorldTickScheduler;",
             at = @At("RETURN"))
     private void largerworld$registerBlockTickScheduler(

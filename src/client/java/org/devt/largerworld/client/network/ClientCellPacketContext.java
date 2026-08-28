@@ -49,6 +49,12 @@ public final class ClientCellPacketContext {
         return activeMapping() != null;
     }
 
+    /** Returns the cell that owns the vanilla packet currently being applied. */
+    public static CellPos sourceCell() {
+        Mapping mapping = activeMapping();
+        return mapping == null ? null : mapping.source();
+    }
+
     public static int chunkX(int localX) {
         Mapping mapping = activeMapping();
         return mapping == null ? localX : VirtualChunkPos.toClientCoordinate(

@@ -407,11 +407,6 @@ public final class CellViewTracker {
                         handedToVanilla = replacement != null
                                 && !replacement.isRemoved()
                                 && replacement.getUuid().equals(entity.getUuid());
-                        if (handedToVanilla) {
-                            org.devt.largerworld.Largerworld.LOGGER.info(
-                                    "[cell-transition] TRACKER_HANDOFF entityId={} uuid={}",
-                                    entity.getId(), entity.getUuid());
-                        }
                     }
                     if (!handedToVanilla) {
                         handedToVanilla = desired.stream().anyMatch(replacement -> {
@@ -420,7 +415,7 @@ public final class CellViewTracker {
                                     && replacementEntity.getUuid().equals(entity.getUuid());
                         });
                     }
-                    tracker.largerworld$stopShadowTracking(player, handedToVanilla);
+                    stopTracking(tracker, handedToVanilla);
                 }
             }
             trackedEntities.clear();
@@ -429,7 +424,7 @@ public final class CellViewTracker {
 
         private void releaseAll() {
             for (CellEntityTracker tracker : trackedEntities) {
-                tracker.largerworld$stopShadowTracking(player, false);
+                stopTracking(tracker, false);
             }
             trackedEntities.clear();
             watches.clear();
@@ -437,6 +432,16 @@ public final class CellViewTracker {
             handoffTicks = 0;
             CellInteractionRouting.forget(player);
             CellPacketRouting.forget(player);
+        }
+
+        private void stopTracking(CellEntityTracker tracker, boolean handedToVanilla) {
+            Entity entity = tracker.largerworld$getEntity();
+            if (entity.getEntityWorld() instanceof ServerWorld sourceWorld) {
+                CellPacketRouting.withSource(sourceWorld,
+                        () -> tracker.largerworld$stopShadowTracking(player, handedToVanilla));
+            } else {
+                tracker.largerworld$stopShadowTracking(player, handedToVanilla);
+            }
         }
     }
 

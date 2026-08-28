@@ -1,7 +1,6 @@
 package org.devt.largerworld.server;
 
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.server.MinecraftServer;
@@ -25,15 +24,13 @@ import org.devt.largerworld.network.EntityHandoffPayload;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.Iterator;
 
 /** Migrates complete entity/passenger graphs between independently stored cell worlds. */
 public final class OriginShiftService {
-    private static final Map<UUID, DebugProbe> DEBUG_PROBES = new HashMap<>();
-
     private OriginShiftService() {
     }
 
@@ -59,7 +56,6 @@ public final class OriginShiftService {
                 shiftIfNeeded(root);
             }
         }
-        tickDebugProbes();
     }
 
     private static void preloadApproachingCells(MinecraftServer server) {
@@ -156,19 +152,14 @@ public final class OriginShiftService {
         if (!(root.getEntityWorld() instanceof ServerWorld sourceWorld)) {
             return false;
         }
-        boolean debugTransition = continuousMovement && root.hasPassengers();
-        boolean clientControlledRoot = continuousMovement
-                && root.streamSelfAndPassengers().anyMatch(
-                        member -> member instanceof ServerPlayerEntity player
-                                && player.hasVehicle());
-        if (debugTransition) {
-            logGraph("BEGIN", root);
-        }
-        Map<UUID, Vec3d> velocities = new HashMap<>();
+        List<Entity> sourceMembers = root.streamSelfAndPassengers().toList();
+        boolean playerControlledGraph = continuousMovement
+                && sourceMembers.stream().anyMatch(
+                member -> member instanceof ServerPlayerEntity player
+                        && player.hasVehicle());
         Map<UUID, UUID> mobTargetIds = new HashMap<>();
         Map<UUID, LivingEntity> mobTargetReferences = new HashMap<>();
-        for (Entity member : root.streamSelfAndPassengers().toList()) {
-            velocities.put(member.getUuid(), member.getVelocity());
+        for (Entity member : sourceMembers) {
             if (member instanceof MobEntity mob && mob.getTarget() != null) {
                 LivingEntity target = mob.getTarget();
                 mobTargetIds.put(member.getUuid(), target.getUuid());
@@ -181,17 +172,24 @@ public final class OriginShiftService {
             }
         }
 
-        // The source tracker can flush its destroy packet after the synchronous
-        // teleport context has ended. Tell the controlling client up front to
-        // retain the same entity object until the destination spawn arrives;
-        // that object contains the authoritative client-side vehicle momentum.
+        // Claim the source view before vanilla starts moving the root. Waiting
+        // for the passenger teleport is too late because the old root tracker
+        // has already been stopped by then.
         if (continuousMovement) {
-            for (Entity member : root.streamSelfAndPassengers().toList()) {
-                if (member instanceof ServerPlayerEntity player && player.hasVehicle()) {
-                    player.networkHandler.sendPacket(new CustomPayloadS2CPacket(
-                            new EntityHandoffPayload(root.getId(), root.getUuid())));
+            for (Entity member : sourceMembers) {
+                if (member instanceof ServerPlayerEntity player) {
+                    CellViewTracker.prepareTransition(
+                            sourceWorld.getServer(), player, targetCell,
+                            x + player.getX() - root.getX(),
+                            z + player.getZ() - root.getZ());
                 }
             }
+        }
+        if (playerControlledGraph) {
+            // Only a ridden graph needs an identity bridge on the client. An
+            // ordinary projectile or mob must complete the normal destroy/spawn
+            // lifecycle; retaining both sides is visible as a duplicate entity.
+            announceClientHandoff(sourceWorld, targetCell, sourceMembers);
         }
 
         TeleportTarget target = new TeleportTarget(
@@ -201,18 +199,15 @@ public final class OriginShiftService {
                 root.getYaw(),
                 root.getPitch(),
                 TeleportTarget.NO_OP);
-        Entity[] result = new Entity[1];
-        CellPacketRouting.withSource(targetWorld, () -> result[0] = continuousMovement
-                ? SeamlessCellTeleport.withContinuousMovement(root, () -> root.teleportTo(target))
-                : root.teleportTo(target));
-        Entity teleportedRoot = result[0];
+        Entity teleportedRoot = CellPacketRouting.withSourceResult(targetWorld, () ->
+                SeamlessCellTeleport.withCellHandoff(
+                        continuousMovement, () -> root.teleportTo(target)));
         if (teleportedRoot == null) {
-            if (debugTransition) {
-                Largerworld.LOGGER.warn("[cell-transition] FAILED rootUuid={} targetCell={}",
-                        root.getUuid(), targetCell);
-            }
+            Largerworld.LOGGER.warn("Failed to move entity graph {} to cell {}",
+                    root.getUuid(), targetCell);
             return false;
         }
+        List<Entity> targetMembers = teleportedRoot.streamSelfAndPassengers().toList();
 
         // Update the synchronized logical cell only after teleportTo has rebased
         // the network origin and completed the vanilla world change. Setting it
@@ -222,44 +217,23 @@ public final class OriginShiftService {
         // client window). On an integrated client that left stale source chunks
         // mixed into the freshly loaded destination terrain.
         CellPacketRouting.withSource(targetWorld, () -> {
-            for (Entity member : teleportedRoot.streamSelfAndPassengers().toList()) {
+            for (Entity member : targetMembers) {
                 if (member instanceof ServerPlayerEntity player) {
                     player.setAttached(Largerworld.CELL_POS, targetCell);
                 }
             }
         });
 
-        // Vanilla may recreate regular entities and independently teleport their
-        // passengers. Restore every member after the complete graph has been
-        // rebuilt so those intermediate operations cannot discard momentum.
+        // Cross-world teleportation recreates ordinary entities and vehicles,
+        // preserving their complete serialized state (inventory, saddle,
+        // ownership and subtype data). UUID lookup reconnects the rebuilt graph.
         Map<UUID, Entity> rebuiltMembers = new HashMap<>();
-        for (Entity member : teleportedRoot.streamSelfAndPassengers().toList()) {
+        for (Entity member : targetMembers) {
             rebuiltMembers.put(member.getUuid(), member);
-            Vec3d velocity = velocities.get(member.getUuid());
-            if (velocity != null) {
-                member.setVelocity(velocity);
-                if (!(member instanceof ServerPlayerEntity)
-                        && !(clientControlledRoot
-                        && member.getUuid().equals(teleportedRoot.getUuid()))) {
-                    member.velocityDirty = true;
-                }
-            }
         }
 
-        if (debugTransition) {
-            logGraph("REBUILT", teleportedRoot);
-            DEBUG_PROBES.put(teleportedRoot.getUuid(),
-                    new DebugProbe(
-                            teleportedRoot,
-                            teleportedRoot.streamSelfAndPassengers()
-                                    .map(Entity::getUuid).collect(java.util.stream.Collectors.toSet()),
-                            8));
-        }
-
-        // Ordinary mobs are recreated by cross-world teleportation. Their goal
-        // objects and navigation are rebuilt, and vanilla does not serialize the
-        // live attack target. Restore that relation after the complete passenger
-        // graph exists so a pursuit does not stop exactly at the seam.
+        // Recreated mobs lose their live attack target. Restore it after the
+        // complete graph exists so pursuit can continue across the seam.
         for (Map.Entry<UUID, UUID> entry : mobTargetIds.entrySet()) {
             Entity rebuilt = rebuiltMembers.get(entry.getKey());
             if (!(rebuilt instanceof MobEntity mob)) {
@@ -278,7 +252,7 @@ public final class OriginShiftService {
         // coordinates from the previous tick. Rebase them immediately; waiting
         // for the next network-handler tick rejects or corrects the first input
         // packet after the seam and produces a visible one-tick pause.
-        for (Entity member : teleportedRoot.streamSelfAndPassengers().toList()) {
+        for (Entity member : targetMembers) {
             if (!(member instanceof ServerPlayerEntity player) || !player.hasVehicle()) {
                 continue;
             }
@@ -317,64 +291,22 @@ public final class OriginShiftService {
         return true;
     }
 
-    public static boolean isDebugTransition(Entity entity) {
-        if (entity == null) {
-            return false;
-        }
-        UUID entityUuid = entity.getUuid();
-        UUID rootUuid = entity.getRootVehicle().getUuid();
-        return DEBUG_PROBES.containsKey(rootUuid)
-                || DEBUG_PROBES.values().stream()
-                .anyMatch(probe -> probe.memberUuids().contains(entityUuid));
-    }
-
-    private static void logGraph(String phase, Entity root) {
-        for (Entity member : root.streamSelfAndPassengers().toList()) {
-            Entity vehicle = member.getVehicle();
-            Vec3d velocity = member.getVelocity();
-            Largerworld.LOGGER.info(
-                    "[cell-transition] {} type={} uuid={} id={} object={} world={} "
-                            + "pos=({},{},{}) velocity=({},{},{}) vehicleId={} passengers={}",
-                    phase,
-                    EntityType.getId(member.getType()),
-                    member.getUuid(),
+    private static void announceClientHandoff(
+            ServerWorld sourceWorld, CellPos targetCell, List<Entity> members) {
+        CellPos sourceCell = CellWorldKey.cell(sourceWorld.getRegistryKey());
+        for (Entity member : members) {
+            var packet = new CustomPayloadS2CPacket(new EntityHandoffPayload(
                     member.getId(),
-                    System.identityHashCode(member),
-                    member.getEntityWorld().getRegistryKey().getValue(),
-                    member.getX(), member.getY(), member.getZ(),
-                    velocity.x, velocity.y, velocity.z,
-                    vehicle == null ? -1 : vehicle.getId(),
-                    member.getPassengerList().stream().map(Entity::getId).toList());
-        }
-    }
+                    member.getUuid(),
+                    sourceCell,
+                    targetCell));
 
-    private static void tickDebugProbes() {
-        Iterator<Map.Entry<UUID, DebugProbe>> iterator = DEBUG_PROBES.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<UUID, DebugProbe> entry = iterator.next();
-            DebugProbe probe = entry.getValue();
-            Entity root = probe.root();
-            Vec3d velocity = root.getVelocity();
-            Largerworld.LOGGER.info(
-                    "[cell-transition] TICK remaining={} type={} uuid={} id={} object={} "
-                            + "removed={} world={} pos=({},{},{}) velocity=({},{},{}) passengers={}",
-                    probe.remainingTicks(),
-                    EntityType.getId(root.getType()),
-                    root.getUuid(), root.getId(), System.identityHashCode(root),
-                    root.isRemoved(), root.getEntityWorld().getRegistryKey().getValue(),
-                    root.getX(), root.getY(), root.getZ(),
-                    velocity.x, velocity.y, velocity.z,
-                    root.getPassengerList().stream().map(Entity::getId).toList());
-            if (probe.remainingTicks() <= 1 || root.isRemoved()) {
-                iterator.remove();
-            } else {
-                entry.setValue(new DebugProbe(
-                        root, probe.memberUuids(), probe.remainingTicks() - 1));
-            }
+            // Shadow viewers are real listeners of the same source tracker, and
+            // sendToNearbyPlayers also includes the entity itself when it is a
+            // player. One ordered send therefore reaches every client that can
+            // already have this entity without duplicating the marker.
+            sourceWorld.getChunkManager().sendToNearbyPlayers(member, packet);
         }
-    }
-
-    private record DebugProbe(Entity root, Set<UUID> memberUuids, int remainingTicks) {
     }
 
 }

@@ -1,17 +1,24 @@
 package org.devt.largerworld.mixin;
 
 import net.minecraft.entity.Entity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.world.TeleportTarget;
+import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.server.SeamlessCellTeleport;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Preserves runtime identity and momentum while vanilla rebuilds an entity at a cell seam. */
+/** Preserves continuous identity and per-entity momentum during a cell handoff. */
 @Mixin(Entity.class)
 public abstract class EntityTeleportMixin {
+    @Shadow
+    protected abstract void removeFromDimension();
+
     @Inject(method = "copyFrom", at = @At("RETURN"))
     private void largerworld$copyContinuousState(Entity original, CallbackInfo ci) {
         if (!SeamlessCellTeleport.isContinuousMovement()) {
@@ -27,7 +34,7 @@ public abstract class EntityTeleportMixin {
             TeleportTarget rootTarget,
             Entity passenger,
             CallbackInfoReturnable<TeleportTarget> cir) {
-        if (!SeamlessCellTeleport.isContinuousMovement()) {
+        if (!SeamlessCellTeleport.isCellHandoff()) {
             return;
         }
         TeleportTarget target = cir.getReturnValue();
@@ -41,5 +48,19 @@ public abstract class EntityTeleportMixin {
                 ((TeleportTargetAccessor) (Object) target).largerworld$isAsPassenger(),
                 target.relatives(),
                 target.postTeleportTransition()));
+    }
+
+    @Redirect(
+            method = "teleportCrossDimension",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/entity/Entity;removeFromDimension()V"))
+    private void largerworld$routeSourceRemoval(Entity original) {
+        if (SeamlessCellTeleport.isCellHandoff()
+                && original.getEntityWorld() instanceof ServerWorld sourceWorld) {
+            CellPacketRouting.withSource(sourceWorld, this::removeFromDimension);
+        } else {
+            removeFromDimension();
+        }
     }
 }

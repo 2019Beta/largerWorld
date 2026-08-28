@@ -1,13 +1,9 @@
 package org.devt.largerworld.server;
 
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.ints.IntList;
 import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.s2c.common.CustomPayloadS2CPacket;
 import net.minecraft.network.packet.s2c.play.BundleS2CPacket;
 import net.minecraft.network.packet.s2c.play.GameJoinS2CPacket;
-import net.minecraft.network.packet.s2c.play.EntitiesDestroyS2CPacket;
-import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
 import net.minecraft.network.packet.s2c.play.UnloadChunkS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.LightUpdateS2CPacket;
@@ -98,38 +94,6 @@ public final class CellPacketRouting {
                 && (custom.payload() instanceof CellPacketPayload
                 || custom.payload() instanceof EntityHandoffPayload)) {
             return packet;
-        }
-        if (SeamlessCellTeleport.isContinuousMovement()
-                && packet instanceof EntityPassengersSetS2CPacket passengers
-                && SeamlessCellTeleport.isTransitionEntity(passengers.getEntityId())
-                && passengers.getPassengerIds().length == 0) {
-            // Vanilla temporarily detaches the graph while moving it between
-            // ServerWorld instances. That intermediate state is not a real
-            // dismount and must never reach the riding client.
-            Largerworld.LOGGER.info(
-                    "[cell-transition] SUPPRESS_TEMP_DISMOUNT entityId={}",
-                    passengers.getEntityId());
-            return null;
-        }
-        if (SeamlessCellTeleport.isContinuousMovement()
-                && packet instanceof EntitiesDestroyS2CPacket destroy) {
-            IntList retained = new IntArrayList();
-            for (int entityId : destroy.getEntityIds()) {
-                if (!SeamlessCellTeleport.isTransitionEntity(entityId)) {
-                    retained.add(entityId);
-                }
-            }
-            if (retained.size() != destroy.getEntityIds().size()) {
-                Largerworld.LOGGER.info(
-                        "[cell-transition] SUPPRESS_TEMP_DESTROY ids={}",
-                        destroy.getEntityIds());
-            }
-            if (retained.isEmpty()) {
-                return null;
-            }
-            if (retained.size() != destroy.getEntityIds().size()) {
-                packet = new EntitiesDestroyS2CPacket(retained);
-            }
         }
         // Bundle packets are synthetic transport containers and are not part of
         // the normal play-state packet codec. Wrapping the container itself in a

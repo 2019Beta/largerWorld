@@ -6,7 +6,6 @@ import net.minecraft.server.network.PlayerAssociatedNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import org.devt.largerworld.server.CellEntityTracker;
 import org.devt.largerworld.server.CellViewTracker;
-import org.devt.largerworld.server.SeamlessCellTeleport;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -60,25 +59,12 @@ public abstract class EntityTrackerMixin implements CellEntityTracker {
         updateTrackedStatus(player);
     }
 
-    /**
-     * Vanilla drops every listener while removing a player from the old world.
-     * Keep listeners that the stitched shadow view claimed before that removal;
-     * otherwise the client observes a destroy followed by a spawn one tick later.
-     */
-    @Inject(method = "stopTracking()V", at = @At("HEAD"), cancellable = true)
-    private void largerworld$keepAllListenersDuringMigration(CallbackInfo ci) {
-        if (SeamlessCellTeleport.isContinuousMovement()) {
-            ci.cancel();
-        }
-    }
-
     @Inject(
             method = "stopTracking(Lnet/minecraft/server/network/ServerPlayerEntity;)V",
             at = @At("HEAD"),
             cancellable = true)
     private void largerworld$keepShadowListener(ServerPlayerEntity player, CallbackInfo ci) {
-        if (SeamlessCellTeleport.isContinuousMovement()
-                || largerworld$shadowListeners.contains(player.networkHandler)
+        if (largerworld$shadowListeners.contains(player.networkHandler)
                 || CellViewTracker.shouldHoldCurrentCellEntity(player, entity)) {
             ci.cancel();
         }

@@ -6,11 +6,16 @@ import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.util.Identifier;
 import org.devt.largerworld.Largerworld;
+import org.devt.largerworld.coordinate.CellPos;
 
 import java.util.UUID;
 
-/** Announces that an existing client entity will be replaced server-side at a cell seam. */
-public record EntityHandoffPayload(int entityId, UUID entityUuid) implements CustomPayload {
+/** Bridges one player-ridden entity graph between source and target trackers. */
+public record EntityHandoffPayload(
+        int entityId,
+        UUID entityUuid,
+        CellPos sourceCell,
+        CellPos targetCell) implements CustomPayload {
     public static final Id<EntityHandoffPayload> ID =
             new Id<>(Identifier.of(Largerworld.MOD_ID, "entity_handoff"));
 
@@ -18,8 +23,14 @@ public record EntityHandoffPayload(int entityId, UUID entityUuid) implements Cus
             (payload, buf) -> {
                 buf.writeVarInt(payload.entityId());
                 buf.writeUuid(payload.entityUuid());
+                CellPos.PACKET_CODEC.encode(buf, payload.sourceCell());
+                CellPos.PACKET_CODEC.encode(buf, payload.targetCell());
             },
-            buf -> new EntityHandoffPayload(buf.readVarInt(), buf.readUuid()));
+            buf -> new EntityHandoffPayload(
+                    buf.readVarInt(),
+                    buf.readUuid(),
+                    CellPos.PACKET_CODEC.decode(buf),
+                    CellPos.PACKET_CODEC.decode(buf)));
 
     public static void register() {
         PayloadTypeRegistry.playS2C().register(ID, CODEC);
