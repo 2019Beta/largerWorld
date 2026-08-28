@@ -157,9 +157,11 @@ public final class OriginShiftService {
                 && sourceMembers.stream().anyMatch(
                 member -> member instanceof ServerPlayerEntity player
                         && player.hasVehicle());
+        Map<UUID, Vec3d> velocities = new HashMap<>();
         Map<UUID, UUID> mobTargetIds = new HashMap<>();
         Map<UUID, LivingEntity> mobTargetReferences = new HashMap<>();
         for (Entity member : sourceMembers) {
+            velocities.put(member.getUuid(), member.getVelocity());
             if (member instanceof MobEntity mob && mob.getTarget() != null) {
                 LivingEntity target = mob.getTarget();
                 mobTargetIds.put(member.getUuid(), target.getUuid());
@@ -203,6 +205,13 @@ public final class OriginShiftService {
                 SeamlessCellTeleport.withCellHandoff(
                         continuousMovement, () -> root.teleportTo(target)));
         if (teleportedRoot == null) {
+            if (continuousMovement) {
+                for (Entity member : sourceMembers) {
+                    if (member instanceof ServerPlayerEntity player) {
+                        CellViewTracker.abortTransition(player);
+                    }
+                }
+            }
             Largerworld.LOGGER.warn("Failed to move entity graph {} to cell {}",
                     root.getUuid(), targetCell);
             return false;
@@ -248,6 +257,35 @@ public final class OriginShiftService {
             }
         }
 
+        // Cross-world teleportation dismantles the riding graph, moves every
+        // passenger independently, recreates the root and only then reattaches
+        // the passengers. Reassert the snapshot after that complete sequence;
+        // restoring velocity only from TeleportTarget/copyFrom is too early.
+        for (Entity member : targetMembers) {
+            if (member == teleportedRoot) {
+                continue;
+            }
+            Vec3d velocity = velocities.get(member.getUuid());
+            if (velocity != null) {
+                member.setVelocity(velocity);
+                if (!(member instanceof ServerPlayerEntity)) {
+                    member.velocityDirty = true;
+                }
+            }
+        }
+        Vec3d rootVelocity = velocities.get(teleportedRoot.getUuid());
+        if (rootVelocity != null) {
+            teleportedRoot.setVelocity(rootVelocity);
+            // The controlling client keeps the same vehicle object and its
+            // local momentum through EntityHandoffPayload. A forced velocity
+            // packet would rewind that client prediction; other roots need the
+            // ordinary authoritative velocity update.
+            if (!(teleportedRoot instanceof ServerPlayerEntity)
+                    && !playerControlledGraph) {
+                teleportedRoot.velocityDirty = true;
+            }
+        }
+
         // VehicleMove validation keeps both an object reference and local-cell
         // coordinates from the previous tick. Rebase them immediately; waiting
         // for the next network-handler tick rejects or corrects the first input
@@ -266,6 +304,8 @@ public final class OriginShiftService {
             handler.largerworld$setUpdatedRiddenX(vehicle.getX());
             handler.largerworld$setUpdatedRiddenY(vehicle.getY());
             handler.largerworld$setUpdatedRiddenZ(vehicle.getZ());
+            handler.largerworld$setVehicleFloating(false);
+            handler.largerworld$setVehicleFloatingTicks(0);
         }
 
         // Entity tracking may start in the destination before its passenger

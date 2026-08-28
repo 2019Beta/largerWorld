@@ -156,7 +156,11 @@ public final class CellPacketRouting {
             return null;
         }
         if (!DIRECT_UNLOAD.get() && packet instanceof UnloadChunkS2CPacket unload) {
-            boolean suppressed = CellViewTracker.shouldRetain(handler.player, source, unload.pos());
+            Boolean handoffDecision = CellViewTracker.shouldSuppressHandoffUnload(
+                    handler.player, source, unload.pos());
+            boolean suppressed = handoffDecision != null
+                    ? handoffDecision
+                    : CellViewTracker.shouldRetain(handler.player, source, unload.pos());
             if (suppressed) {
                 return null;
             }

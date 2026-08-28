@@ -28,4 +28,10 @@ public interface ServerPlayNetworkHandlerAccessor {
     @Accessor("updatedRiddenZ")
     void largerworld$setUpdatedRiddenZ(double value);
 
+    @Accessor("vehicleFloating")
+    void largerworld$setVehicleFloating(boolean value);
+
+    @Accessor("vehicleFloatingTicks")
+    void largerworld$setVehicleFloatingTicks(int value);
+
 }

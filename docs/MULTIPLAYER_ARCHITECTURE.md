@@ -95,8 +95,10 @@ The translated packet groups include:
 
 Sounds and world events sent through `PlayerManager.sendToAround`, plus particles
 and block-breaking progress emitted directly by `ServerWorld`, are copied to
-nearby shadow viewers using global cell distance. Shadow block/light changes
-currently resend the affected full chunk, favoring correctness over bandwidth.
+nearby shadow viewers using global cell distance. Shadow viewers are also joined
+to `ChunkHolder`'s update recipients, so they receive the same single-block,
+section-delta, block-entity, and light packets as vanilla chunk watchers without
+replacing the client chunk.
 
 ## Seam crossing and inbound routing
 
@@ -118,8 +120,10 @@ The connection origin stays stable during ordinary seam crossings. Before a
 distant teleport or roughly 29 cell crossings would exceed vanilla's
 approximately 30-million-block safety range, the server rebases the origin to the
 target cell and uses one vanilla client-world reload to discard state mapped with
-the old origin. Async editors such as a sign opened across a seam before crossing
-are not yet remotely routed.
+the old origin. A sign opened across a seam retains its target world and editor
+lifetime until the filtered update is applied. Other vanilla position-bearing
+editor actions (command, structure, jigsaw, and test blocks) are translated and
+executed in their owning cell.
 
 For loaded neighboring cells, block writes, neighbor-update chains, synchronized
 block events and scheduled block/fluid ticks are projected to the owning backing

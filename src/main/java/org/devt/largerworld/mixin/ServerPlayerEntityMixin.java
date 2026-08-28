@@ -1,5 +1,6 @@
 package org.devt.largerworld.mixin;
 
+import net.minecraft.block.entity.SignBlockEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.world.TeleportTarget;
 import org.devt.largerworld.server.SeamlessCellTeleport;
@@ -18,6 +19,12 @@ import net.minecraft.entity.player.PlayerEntity;
 
 @Mixin(ServerPlayerEntity.class)
 public abstract class ServerPlayerEntityMixin {
+
+    @Inject(method = "openEditSignScreen", at = @At("HEAD"))
+    private void largerworld$rememberRemoteSignEditor(
+            SignBlockEntity sign, boolean front, CallbackInfo ci) {
+        CellInteractionRouting.beginSignEdit((ServerPlayerEntity) (Object) this, sign);
+    }
 
     @Redirect(
             method = "tick",

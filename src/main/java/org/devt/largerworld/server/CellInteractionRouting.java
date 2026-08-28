@@ -1,6 +1,7 @@
 package org.devt.largerworld.server;
 
 import net.minecraft.entity.Entity;
+import net.minecraft.block.entity.SignBlockEntity;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
@@ -11,6 +12,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.network.ServerPlayerInteractionManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.screen.ScreenHandler;
+import net.minecraft.server.filter.FilteredMessage;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -23,8 +25,10 @@ import org.devt.largerworld.world.CellWorldManager;
 import org.devt.largerworld.world.CellBoundaryAccess;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import org.jspecify.annotations.Nullable;
 
 /** Routes interactions with visible neighboring-cell content to its backing world. */
@@ -34,6 +38,7 @@ public final class CellInteractionRouting {
             ThreadLocal.withInitial(() -> false);
     private static final Map<UUID, RemoteMining> REMOTE_MINING = new HashMap<>();
     private static final Map<UUID, RemoteScreen> REMOTE_SCREEN_WORLDS = new HashMap<>();
+    private static final Map<UUID, RemoteSignEditor> REMOTE_SIGN_EDITORS = new HashMap<>();
 
     private CellInteractionRouting() {
     }
@@ -131,15 +136,84 @@ public final class CellInteractionRouting {
         return REROUTING.get();
     }
 
+    /** Records the asynchronous editor opened while a block use is projected into another cell. */
+    public static void beginSignEdit(ServerPlayerEntity player, SignBlockEntity sign) {
+        if (!REROUTING.get() || !(sign.getWorld() instanceof ServerWorld world)) {
+            REMOTE_SIGN_EDITORS.remove(player.getUuid());
+            return;
+        }
+        REMOTE_SIGN_EDITORS.put(player.getUuid(),
+                new RemoteSignEditor(world, sign.getPos().toImmutable(), world.getTime()));
+    }
+
+    /** Keeps vanilla's sign editor UUID alive while its player is projected in a neighboring cell. */
+    public static boolean isRemoteSignEditor(SignBlockEntity sign, UUID editor) {
+        RemoteSignEditor remote = REMOTE_SIGN_EDITORS.get(editor);
+        if (remote == null || sign.getWorld() != remote.world()
+                || !sign.getPos().equals(remote.pos())) {
+            return false;
+        }
+        // Do not retain a world forever if a modded client abandons the editor
+        // without sending the normal UpdateSign packet.
+        if (remote.world().getTime() - remote.openedAt() > 20L * 60L * 5L) {
+            REMOTE_SIGN_EDITORS.remove(editor);
+            return false;
+        }
+        return true;
+    }
+
+    /** Applies the already-filtered sign text in the world where the editor was opened. */
+    public static boolean handleSignUpdate(
+            ServerPlayerEntity player,
+            net.minecraft.network.packet.c2s.play.UpdateSignC2SPacket packet,
+            List<FilteredMessage> messages) {
+        RemoteSignEditor remote = REMOTE_SIGN_EDITORS.get(player.getUuid());
+        if (remote == null || !clientPos(player, remote).equals(packet.getPos())) {
+            return false;
+        }
+        try {
+            runInWorld(player, remote.world(), () -> {
+                player.updateLastActionTime();
+                if (remote.world().isChunkLoaded(remote.pos())
+                        && remote.world().getBlockEntity(remote.pos()) instanceof SignBlockEntity sign) {
+                    sign.tryChangeText(player, packet.isFront(), messages);
+                }
+            });
+        } finally {
+            REMOTE_SIGN_EDITORS.remove(player.getUuid());
+        }
+        return true;
+    }
+
+    /** Routes an independent position-bearing editor packet to its backing cell. */
+    public static boolean rerouteBlockPacket(
+            MinecraftServer server,
+            ServerPlayNetworkHandler handler,
+            BlockPos clientPos,
+            Consumer<BlockPos> translatedAction) {
+        if (REROUTING.get()) {
+            return false;
+        }
+        BlockTarget target = blockTarget(server, handler.player, clientPos);
+        if (target == null || target.world() == handler.player.getEntityWorld()) {
+            return false;
+        }
+        runInWorld(handler.player, target.world(), () -> translatedAction.accept(target.pos()));
+        return true;
+    }
+
     public static void forget(ServerPlayerEntity player) {
         REMOTE_MINING.remove(player.getUuid());
         REMOTE_SCREEN_WORLDS.remove(player.getUuid());
+        REMOTE_SIGN_EDITORS.remove(player.getUuid());
     }
 
     /** Prevents eviction while a remote mining operation or screen still owns a world reference. */
     public static boolean isWorldInUse(ServerWorld world) {
         return REMOTE_MINING.values().stream().anyMatch(remote -> remote.world() == world)
                 || REMOTE_SCREEN_WORLDS.values().stream()
+                .anyMatch(remote -> remote.world() == world)
+                || REMOTE_SIGN_EDITORS.values().stream()
                 .anyMatch(remote -> remote.world() == world);
     }
 
@@ -244,6 +318,17 @@ public final class CellInteractionRouting {
                         * (double) VirtualPosition.CELL_SIZE);
     }
 
+    private static BlockPos clientPos(ServerPlayerEntity player, RemoteSignEditor remote) {
+        CellPos origin = CellPacketRouting.origin(player);
+        CellPos source = CellWorldKey.cell(remote.world().getRegistryKey());
+        return new BlockPos(
+                Math.toIntExact((long) remote.pos().getX()
+                        + (source.x() - origin.x()) * VirtualPosition.CELL_SIZE),
+                remote.pos().getY(),
+                Math.toIntExact((long) remote.pos().getZ()
+                        + (source.z() - origin.z()) * VirtualPosition.CELL_SIZE));
+    }
+
     private static boolean isBlockAction(PlayerActionC2SPacket.Action action) {
         return action == PlayerActionC2SPacket.Action.START_DESTROY_BLOCK
                 || action == PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK
@@ -312,5 +397,8 @@ public final class CellInteractionRouting {
     }
 
     private record RemoteScreen(ServerWorld world, ScreenHandler handler) {
+    }
+
+    private record RemoteSignEditor(ServerWorld world, BlockPos pos, long openedAt) {
     }
 }

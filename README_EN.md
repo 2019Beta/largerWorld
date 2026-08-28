@@ -31,7 +31,7 @@ The vanilla engine only ever sees local coordinates. `cellX`/`cellZ` are kept as
 
 The network coordinate origin normally stays put within a connection, so the client world doesn't shift on every border crossing. When a long-range teleport or repeated crossing approaches the vanilla client safe range (~30,000,000 blocks), the server resets the origin to the target cell and forces one client world reload. Stored coordinates stay `long cell × 2^20`.
 
-Block changes in a neighboring cell currently propagate as full chunk refreshes. That keeps things consistent but costs more bandwidth than vanilla incremental packets; forwarding per-section deltas and lighting is the planned refinement. Async edit interfaces like signs are still rough around the edges when a player hasn't stepped into the target cell yet.
+Block, block-entity, and lighting changes in neighboring cells reuse vanilla single-block, section-delta, and light-update packets, so a small change no longer rebuilds the entire client chunk. Sign editors opened across a cell boundary retain a remote editing session; independent position-based editor packets for command blocks, structure blocks, jigsaws, and test blocks are routed to their owning cell as well.
 
 Generation coordinate offsets only affect newly generated chunks. The vanilla worldgen API takes 32-bit horizontal coordinates, so sample coordinates beyond that range fold deterministically to their low 32 bits. Stored positions and displayed global coordinates keep full precision. Region files from cells generated before an upgrade are not rewritten; test boundary cases in a fresh world or in cells that haven't been generated yet.
 

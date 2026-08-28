@@ -19,6 +19,7 @@ import org.devt.largerworld.coordinate.VirtualChunkPos;
 import org.devt.largerworld.mixin.ServerChunkLoadingManagerAccessor;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
+import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -113,20 +114,47 @@ public final class CellViewTracker {
         int centerX = MathHelper.floor(targetX) >> 4;
         int centerZ = MathHelper.floor(targetZ) >> 4;
         int radius = Math.max(2, player.getViewDistance());
+        Set<VirtualChunkPos> retainedSourceChunks = new HashSet<>();
         for (VirtualChunkPos pos : desiredShadowChunks(targetCell, centerX, centerZ, radius)) {
             if (pos.cell().equals(sourceCell)) {
+                retainedSourceChunks.add(pos);
                 state.claimVanillaChunk(server, pos);
             }
         }
         state.updateEntities();
-        state.beginHandoff(targetCell);
+        state.beginHandoff(sourceCell, targetCell, retainedSourceChunks);
     }
 
     public static boolean shouldSuppressHandoffChunk(
             ServerPlayerEntity player, CellPos source, ChunkPos localPos) {
+        if (!VirtualChunkPos.isCanonical(localPos.x, localPos.z)) {
+            return false;
+        }
         PlayerState state = STATES.get(player.getUuid());
         return state != null && state.consumeHandoffChunk(
                 new VirtualChunkPos(source, localPos.x, localPos.z));
+    }
+
+    /**
+     * Gives an explicit decision for source-world unloads during a handoff.
+     * {@code null} means that the packet is unrelated to the active handoff.
+     */
+    public static @Nullable Boolean shouldSuppressHandoffUnload(
+            ServerPlayerEntity player, CellPos source, ChunkPos localPos) {
+        if (!VirtualChunkPos.isCanonical(localPos.x, localPos.z)) {
+            return null;
+        }
+        PlayerState state = STATES.get(player.getUuid());
+        return state == null ? null : state.handoffRetentionDecision(
+                new VirtualChunkPos(source, localPos.x, localPos.z));
+    }
+
+    /** Clears transition-only packet suppression after an unsuccessful move. */
+    public static void abortTransition(ServerPlayerEntity player) {
+        PlayerState state = STATES.get(player.getUuid());
+        if (state != null) {
+            state.clearHandoff();
+        }
     }
 
     public static boolean shouldHoldCurrentCellEntity(ServerPlayerEntity player, Entity entity) {
@@ -135,10 +163,26 @@ public final class CellViewTracker {
                 || entity.getEntityWorld() != player.getEntityWorld()) {
             return false;
         }
+        ChunkPos entityChunk = entity.getChunkPos();
+        if (!VirtualChunkPos.isCanonical(entityChunk.x, entityChunk.z)) {
+            // During removal from the source world, a crossing entity can briefly
+            // be one chunk outside that cell. It belongs to the destination copy,
+            // so the source tracker must not retain it or construct a virtual
+            // position from the non-canonical coordinates.
+            return false;
+        }
+        Boolean transitionDecision = state.handoffRetentionDecision(
+                new VirtualChunkPos(
+                        CellWorldKey.cell(entity.getEntityWorld().getRegistryKey()),
+                        entityChunk.x,
+                        entityChunk.z));
+        if (transitionDecision != null) {
+            return transitionDecision;
+        }
         return shouldRetain(
                 player,
                 CellWorldKey.cell(entity.getEntityWorld().getRegistryKey()),
-                entity.getChunkPos());
+                entityChunk);
     }
 
     public static boolean shouldRetain(ServerPlayerEntity player, CellPos source, ChunkPos localPos) {
@@ -250,22 +294,13 @@ public final class CellViewTracker {
         return sent;
     }
 
-    public static void broadcastChunkRefresh(ServerWorld world, WorldChunk chunk) {
-        List<ServerPlayerEntity> watchers = watchers(world, chunk.getPos());
-        if (watchers.isEmpty()) {
-            return;
-        }
-        ChunkDataS2CPacket packet = new ChunkDataS2CPacket(chunk, world.getLightingProvider(), null, null);
-        for (ServerPlayerEntity player : watchers) {
-            CellPacketRouting.sendFrom(player, world, packet);
-        }
-    }
-
     private static final class PlayerState {
         private ServerPlayerEntity player;
         private final Map<VirtualChunkPos, Watch> watches = new HashMap<>();
         private final Set<CellEntityTracker> trackedEntities = new HashSet<>();
         private final Set<VirtualChunkPos> pendingHandoffChunks = new HashSet<>();
+        private final Set<VirtualChunkPos> retainedHandoffChunks = new HashSet<>();
+        private @Nullable CellPos handoffSourceCell;
         private int handoffTicks;
 
         private PlayerState(ServerPlayerEntity player) {
@@ -321,8 +356,14 @@ public final class CellViewTracker {
             watch.sent = true;
         }
 
-        private void beginHandoff(CellPos targetCell) {
+        private void beginHandoff(
+                CellPos sourceCell,
+                CellPos targetCell,
+                Set<VirtualChunkPos> retainedSourceChunks) {
             pendingHandoffChunks.clear();
+            retainedHandoffChunks.clear();
+            retainedHandoffChunks.addAll(retainedSourceChunks);
+            handoffSourceCell = sourceCell;
             for (Map.Entry<VirtualChunkPos, Watch> entry : watches.entrySet()) {
                 if (entry.getKey().cell().equals(targetCell) && entry.getValue().sent) {
                     pendingHandoffChunks.add(entry.getKey());
@@ -338,9 +379,16 @@ public final class CellViewTracker {
             return handoffTicks > 0 && pendingHandoffChunks.remove(pos);
         }
 
+        private @Nullable Boolean handoffRetentionDecision(VirtualChunkPos pos) {
+            if (handoffTicks <= 0 || !pos.cell().equals(handoffSourceCell)) {
+                return null;
+            }
+            return retainedHandoffChunks.contains(pos);
+        }
+
         private void tickHandoff() {
             if (handoffTicks > 0 && --handoffTicks == 0) {
-                pendingHandoffChunks.clear();
+                clearHandoff();
                 Int2ObjectMap<?> trackers = ((ServerChunkLoadingManagerAccessor)
                         player.getEntityWorld().getChunkManager().chunkLoadingManager)
                         .largerworld$getEntityTrackers();
@@ -348,6 +396,13 @@ public final class CellViewTracker {
                     ((CellEntityTracker) value).largerworld$refreshTracking(player);
                 }
             }
+        }
+
+        private void clearHandoff() {
+            pendingHandoffChunks.clear();
+            retainedHandoffChunks.clear();
+            handoffSourceCell = null;
+            handoffTicks = 0;
         }
 
         private void remove(VirtualChunkPos pos) {
@@ -428,8 +483,7 @@ public final class CellViewTracker {
             }
             trackedEntities.clear();
             watches.clear();
-            pendingHandoffChunks.clear();
-            handoffTicks = 0;
+            clearHandoff();
             CellInteractionRouting.forget(player);
             CellPacketRouting.forget(player);
         }

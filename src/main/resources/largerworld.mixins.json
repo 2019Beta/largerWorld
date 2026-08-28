@@ -40,6 +40,8 @@
     "ServerCommonNetworkHandlerMixin",
     "ServerPlayNetworkHandlerMixin",
     "ServerPlayNetworkHandlerAccessor",
+    "ScreenHandlerMixin",
+    "SignBlockEntityMixin",
     "ServerPlayerEntityMixin",
     "ServerWorldMixin",
     "NoiseChunkGeneratorMixin",
