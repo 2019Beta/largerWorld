@@ -25,6 +25,7 @@ public final class VirtualCoordinatesTest {
         roundTripsCellWorldKeys();
         mapsNeighborChunksIntoClientView();
         keepsConnectionCoordinatesStableAcrossCrossing();
+        mapsCrossCellVehicleMovementFromVehicleCell();
         identifiesCanonicalChunkBounds();
         mapsTransientRenderCenterWithoutCanonicalizing();
         foldsDistantWorldgenCoordinatesDeterministically();
@@ -114,6 +115,26 @@ public final class VirtualCoordinatesTest {
                 + (target.cell().z() - origin.z()) * (double) VirtualPosition.CELL_SIZE;
         equal(524288.0, clientXAfterCrossing, "client X remains continuous");
         equal(-524288.25, clientZAfterCrossing, "client Z remains continuous");
+    }
+
+    private static void mapsCrossCellVehicleMovementFromVehicleCell() {
+        CellPos origin = CellPos.ZERO;
+        CellPos playerCell = new CellPos(1, 0);
+        CellPos vehicleCell = CellPos.ZERO;
+        double clientX = VirtualPosition.HALF_CELL + 0.25;
+
+        double vehicleLocalX = VirtualPosition.clientToLocalX(vehicleCell, origin, clientX);
+        equal(clientX, vehicleLocalX, "cross-cell vehicle uses vehicle cell");
+        equal(-VirtualPosition.HALF_CELL + 0.25,
+                VirtualPosition.clientToLocalX(playerCell, origin, clientX),
+                "player cell would wrap vehicle to the wrong boundary");
+
+        VirtualPosition normalized = VirtualPosition.normalize(
+                vehicleCell, vehicleLocalX, 70, 0);
+        check(normalized.cell().equals(playerCell),
+                "positive-boundary vehicle must cross into the player's cell");
+        equal(-VirtualPosition.HALF_CELL + 0.25, normalized.localX(),
+                "positive-boundary vehicle local coordinate");
     }
 
     private static void identifiesCanonicalChunkBounds() {

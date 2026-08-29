@@ -22,6 +22,8 @@ import net.minecraft.util.hit.BlockHitResult;
 import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellViewTracker;
+import org.devt.largerworld.coordinate.CellPos;
+import org.devt.largerworld.world.CellWorldKey;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -199,10 +201,16 @@ public abstract class ServerPlayNetworkHandlerMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/network/packet/c2s/play/VehicleMoveC2SPacket;position()Lnet/minecraft/util/math/Vec3d;"))
     private Vec3d largerworld$vehiclePosition(VehicleMoveC2SPacket packet) {
         Vec3d pos = packet.position();
+        // A remote entity interaction can establish the riding relation while
+        // the player and vehicle are still backed by adjacent cell worlds. The
+        // packet describes the root vehicle, so translating it through the
+        // player's cell would add or subtract a complete 2^20-block cell.
+        CellPos vehicleCell = CellWorldKey.cell(
+                player.getRootVehicle().getEntityWorld().getRegistryKey());
         return new Vec3d(
-                CellPacketRouting.clientToLocalX(player, pos.x),
+                CellPacketRouting.clientToLocalX(player, vehicleCell, pos.x),
                 pos.y,
-                CellPacketRouting.clientToLocalZ(player, pos.z));
+                CellPacketRouting.clientToLocalZ(player, vehicleCell, pos.z));
     }
 
     @Redirect(

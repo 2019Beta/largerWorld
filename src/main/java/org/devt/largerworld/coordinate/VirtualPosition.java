@@ -53,6 +53,16 @@ public record VirtualPosition(CellPos cell, double localX, double y, double loca
         return normalize(new CellPos(cellX, cellZ), localX, y, localZ);
     }
 
+    /** Converts a connection-space X coordinate into the local X of a source cell. */
+    public static double clientToLocalX(CellPos sourceCell, CellPos originCell, double clientX) {
+        return clientX - ((double) sourceCell.x() - (double) originCell.x()) * CELL_SIZE;
+    }
+
+    /** Converts a connection-space Z coordinate into the local Z of a source cell. */
+    public static double clientToLocalZ(CellPos sourceCell, CellPos originCell, double clientZ) {
+        return clientZ - ((double) sourceCell.z() - (double) originCell.z()) * CELL_SIZE;
+    }
+
     public BigDecimal globalX() {
         return global(cell.x(), localX);
     }

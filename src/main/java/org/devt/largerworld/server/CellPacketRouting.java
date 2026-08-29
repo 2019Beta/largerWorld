@@ -226,10 +226,19 @@ public final class CellPacketRouting {
     }
 
     public static double clientToLocalX(ServerPlayerEntity player, double clientX) {
-        CellPos current = currentWorldCell(player);
-        CellPos origin = origin(player);
-        return clientX - ((double) current.x() - (double) origin.x())
-                * (double) VirtualPosition.CELL_SIZE;
+        return clientToLocalX(player, currentWorldCell(player), clientX);
+    }
+
+    /**
+     * Converts a connection-space X coordinate for an entity in {@code sourceCell}.
+     *
+     * <p>The source is normally the player's current cell. Controlled vehicles can
+     * briefly remain in the neighboring cell after a cross-cell mount, so their
+     * movement packets must use the vehicle's real world instead.</p>
+     */
+    public static double clientToLocalX(
+            ServerPlayerEntity player, CellPos sourceCell, double clientX) {
+        return VirtualPosition.clientToLocalX(sourceCell, origin(player), clientX);
     }
 
     /**
@@ -253,10 +262,13 @@ public final class CellPacketRouting {
     }
 
     public static double clientToLocalZ(ServerPlayerEntity player, double clientZ) {
-        CellPos current = currentWorldCell(player);
-        CellPos origin = origin(player);
-        return clientZ - ((double) current.z() - (double) origin.z())
-                * (double) VirtualPosition.CELL_SIZE;
+        return clientToLocalZ(player, currentWorldCell(player), clientZ);
+    }
+
+    /** See {@link #clientToLocalX(ServerPlayerEntity, CellPos, double)}. */
+    public static double clientToLocalZ(
+            ServerPlayerEntity player, CellPos sourceCell, double clientZ) {
+        return VirtualPosition.clientToLocalZ(sourceCell, origin(player), clientZ);
     }
 
     public static BlockPos clientToLocal(ServerPlayerEntity player, BlockPos clientPos) {
