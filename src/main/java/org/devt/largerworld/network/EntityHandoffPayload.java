@@ -10,7 +10,7 @@ import org.devt.largerworld.coordinate.CellPos;
 
 import java.util.UUID;
 
-/** Bridges one player-ridden entity graph between source and target trackers. */
+/** Bridges one continuously moving entity graph between source and target trackers. */
 public record EntityHandoffPayload(
         Phase phase,
         int entityId,

@@ -18,6 +18,7 @@ import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
+import org.devt.largerworld.mixin.ServerChunkLoadingManagerAccessor;
 import org.devt.largerworld.mixin.ServerPlayNetworkHandlerAccessor;
 import org.devt.largerworld.network.EntityHandoffPayload;
 
@@ -153,6 +154,10 @@ public final class OriginShiftService {
             return false;
         }
         List<Entity> sourceMembers = root.streamSelfAndPassengers().toList();
+        // Every natural cell crossing is one continuous client-side entity
+        // lifecycle. Commands and other explicit teleports still use vanilla's
+        // destroy/spawn lifecycle because continuousMovement is false there.
+        boolean preserveClientIdentity = continuousMovement;
         boolean playerControlledGraph = continuousMovement
                 && sourceMembers.stream().anyMatch(
                 member -> member instanceof ServerPlayerEntity player
@@ -174,6 +179,18 @@ public final class OriginShiftService {
             }
         }
 
+        if (preserveClientIdentity) {
+            // Install both halves of the identity guard before changing any
+            // tracker ownership: mark source listeners for silent retirement,
+            // then tell their clients to retain the matching id/UUID.
+            protectSourceTrackerListeners(sourceWorld, sourceMembers);
+            sendClientHandoff(
+                    EntityHandoffPayload.Phase.BEGIN,
+                    sourceWorld,
+                    targetCell,
+                    sourceMembers);
+        }
+
         // Claim the source view before vanilla starts moving the root. Waiting
         // for the passenger teleport is too late because the old root tracker
         // has already been stopped by then.
@@ -187,16 +204,6 @@ public final class OriginShiftService {
                 }
             }
         }
-        if (playerControlledGraph) {
-            // Only a ridden graph needs an identity bridge on the client. An
-            // ordinary projectile or mob must complete the normal destroy/spawn
-            // lifecycle; retaining both sides is visible as a duplicate entity.
-            sendClientHandoff(
-                    EntityHandoffPayload.Phase.BEGIN,
-                    sourceWorld,
-                    targetCell,
-                    sourceMembers);
-        }
 
         TeleportTarget target = new TeleportTarget(
                 targetWorld,
@@ -209,6 +216,9 @@ public final class OriginShiftService {
                 SeamlessCellTeleport.withCellHandoff(
                         continuousMovement, () -> root.teleportTo(target)));
         if (teleportedRoot == null) {
+            if (preserveClientIdentity) {
+                abortSourceTrackerProtection(sourceWorld, sourceMembers);
+            }
             if (continuousMovement) {
                 for (Entity member : sourceMembers) {
                     if (member instanceof ServerPlayerEntity player) {
@@ -312,11 +322,10 @@ public final class OriginShiftService {
             handler.largerworld$setVehicleFloatingTicks(0);
         }
 
-        if (playerControlledGraph) {
-            // The rebuilt graph and vehicle validation baselines are now final.
-            // COMMIT is the authoritative transition signal because a shadow
-            // tracker can hand ownership to the destination without spawning a
-            // replacement entity on the client.
+        if (preserveClientIdentity) {
+            // The replacement entity and any riding graph are now final.
+            // COMMIT transfers tracker authority even when shadow ownership
+            // changes without a replacement spawn on the client.
             sendClientHandoff(
                     EntityHandoffPayload.Phase.COMMIT,
                     targetWorld,
@@ -358,6 +367,10 @@ public final class OriginShiftService {
                 ? sendingCell : otherCell;
         CellPos targetCell = phase == EntityHandoffPayload.Phase.BEGIN
                 ? otherCell : sendingCell;
+        List<ServerPlayerEntity> graphPlayers = members.stream()
+                .filter(ServerPlayerEntity.class::isInstance)
+                .map(ServerPlayerEntity.class::cast)
+                .toList();
         for (Entity member : members) {
             var packet = new CustomPayloadS2CPacket(new EntityHandoffPayload(
                     phase,
@@ -366,10 +379,18 @@ public final class OriginShiftService {
                     sourceCell,
                     targetCell));
 
-            // Shadow viewers are real listeners of the same source tracker, and
-            // sendToNearbyPlayers also includes the entity itself when it is a
-            // player. One ordered send therefore reaches every client that can
-            // already have this entity without duplicating the marker.
+            // A rider must receive the vehicle marker even while the source
+            // tracker itself is being torn down. The normal tracked/view send
+            // below covers other observers; duplicate markers are idempotent.
+            for (ServerPlayerEntity player : graphPlayers) {
+                player.networkHandler.sendPacket(packet);
+            }
+            if (!graphPlayers.isEmpty()) {
+                Largerworld.LOGGER.info(
+                        "[cell-handoff-server] MARKER phase={} id={} uuid={} graphRecipients={}",
+                        phase, member.getId(), member.getUuid(),
+                        graphPlayers.stream().map(player -> player.getUuid().toString()).toList());
+            }
             sendingWorld.getChunkManager().sendToNearbyPlayers(member, packet);
             if (phase == EntityHandoffPayload.Phase.COMMIT) {
                 CellViewTracker.sendToShadowPlayers(
@@ -382,6 +403,37 @@ public final class OriginShiftService {
                         packet);
             }
         }
+    }
+
+    private static void protectSourceTrackerListeners(
+            ServerWorld sourceWorld, List<Entity> members) {
+        sourceTrackers(sourceWorld, members).forEach(
+                CellEntityTracker::largerworld$beginHandoffTracking);
+    }
+
+    private static void abortSourceTrackerProtection(
+            ServerWorld sourceWorld, List<Entity> members) {
+        sourceTrackers(sourceWorld, members).forEach(
+                CellEntityTracker::largerworld$abortHandoffTracking);
+    }
+
+    private static List<CellEntityTracker> sourceTrackers(
+            ServerWorld sourceWorld, List<Entity> members) {
+        var trackers = ((ServerChunkLoadingManagerAccessor)
+                sourceWorld.getChunkManager().chunkLoadingManager)
+                .largerworld$getEntityTrackers();
+        List<CellEntityTracker> result = new ArrayList<>();
+        for (Entity member : members) {
+            Object value = trackers.get(member.getId());
+            if (!(value instanceof CellEntityTracker tracker)) {
+                continue;
+            }
+            Entity tracked = tracker.largerworld$getEntity();
+            if (tracked.getUuid().equals(member.getUuid())) {
+                result.add(tracker);
+            }
+        }
+        return result;
     }
 
 }

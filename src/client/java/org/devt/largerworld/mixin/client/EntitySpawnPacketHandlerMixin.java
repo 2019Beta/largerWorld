@@ -5,8 +5,13 @@ import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
 import net.minecraft.network.packet.s2c.play.EntitiesDestroyS2CPacket;
-import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
 import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntityPositionS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntityPositionSyncS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntityS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntityTrackerUpdateS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.client.network.ClientCellPacketContext;
 import org.devt.largerworld.client.network.ClientEntityHandoff;
@@ -16,6 +21,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -37,12 +43,16 @@ public abstract class EntitySpawnPacketHandlerMixin {
         ClientWorld world = ((ClientPlayNetworkHandler) (Object) this).getWorld();
         Entity existing = world == null
                 ? null : world.getEntityById(packet.getEntityId());
-        if (existing != null
+        String handoffState = ClientEntityHandoff.debugState(packet.getEntityId(), existing);
+        boolean matchingExisting = existing != null
                 && existing.getUuid().equals(packet.getUuid())
-                && ClientEntityHandoff.shouldIgnoreSpawn(existing)) {
-            Largerworld.LOGGER.debug(
-                    "[cell-handoff] Retained target entity id={} uuid={}",
-                    existing.getId(), existing.getUuid());
+                && ClientEntityHandoff.shouldIgnoreSpawn(existing);
+        Largerworld.LOGGER.info(
+                "[cell-handoff-client] SPAWN id={} uuid={} source={} existingUuid={} state={} decision={}",
+                packet.getEntityId(), packet.getUuid(), ClientCellPacketContext.sourceCell(),
+                existing == null ? null : existing.getUuid(), handoffState,
+                matchingExisting ? "DROP" : "APPLY");
+        if (matchingExisting) {
             // This spawn describes the seam position at the instant the server
             // rebuilt the entity. It can arrive several movement packets later;
             // applying it would rewind the still-moving client vehicle and reset
@@ -69,10 +79,14 @@ public abstract class EntitySpawnPacketHandlerMixin {
         boolean filtered = false;
         for (int entityId : packet.getEntityIds()) {
             Entity entity = world == null ? null : world.getEntityById(entityId);
-            if (ClientEntityHandoff.shouldIgnoreDestroy(entity)) {
-                Largerworld.LOGGER.debug(
-                        "[cell-handoff] Retained source entity id={} uuid={}",
-                        entity.getId(), entity.getUuid());
+            String handoffState = ClientEntityHandoff.debugState(entityId, entity);
+            boolean ignore = ClientEntityHandoff.shouldIgnoreDestroy(entityId, entity);
+            Largerworld.LOGGER.info(
+                    "[cell-handoff-client] DESTROY id={} uuid={} source={} state={} decision={}",
+                    entityId, entity == null ? null : entity.getUuid(),
+                    ClientCellPacketContext.sourceCell(), handoffState,
+                    ignore ? "DROP" : "APPLY");
+            if (ignore) {
                 filtered = true;
             } else {
                 remaining.add(entityId);
@@ -102,8 +116,26 @@ public abstract class EntitySpawnPacketHandlerMixin {
         ClientWorld world = ((ClientPlayNetworkHandler) (Object) this).getWorld();
         Entity vehicle = world == null
                 ? null : world.getEntityById(packet.getEntityId());
-        if (ClientEntityHandoff.shouldIgnorePassengerUpdate(
-                vehicle, packet.getPassengerIds())) {
+        String handoffState = ClientEntityHandoff.debugState(packet.getEntityId(), vehicle);
+        int[] currentPassengerIds = vehicle == null
+                ? new int[0]
+                : vehicle.getPassengerList().stream().mapToInt(Entity::getId).toArray();
+        boolean ignore = ClientEntityHandoff.shouldIgnorePassengerUpdate(
+                packet.getEntityId(), vehicle, packet.getPassengerIds());
+        if (!"NONE".equals(handoffState)
+                || ClientCellPacketContext.isApplyingCellPacket()) {
+            Largerworld.LOGGER.info(
+                    "[cell-handoff-client] PASSENGERS vehicle={} uuid={} source={} "
+                            + "incoming={} current={} state={} decision={}",
+                    packet.getEntityId(),
+                    vehicle == null ? null : vehicle.getUuid(),
+                    ClientCellPacketContext.sourceCell(),
+                    Arrays.toString(packet.getPassengerIds()),
+                    Arrays.toString(currentPassengerIds),
+                    handoffState,
+                    ignore ? "DROP" : "APPLY");
+        }
+        if (ignore) {
             // Cross-world teleportation temporarily detaches and then rebuilds
             // the same graph. The retained client graph is already correct, so
             // neither intermediate passenger list represents a real mount event.
@@ -126,5 +158,62 @@ public abstract class EntitySpawnPacketHandlerMixin {
             ((ClientPlayNetworkHandler) (Object) this)
                     .onEntityPassengersSet(pending);
         }
+    }
+
+    @Inject(method = "onEntity", at = @At("HEAD"), cancellable = true)
+    private void largerworld$ignoreStaleRelativeMove(EntityS2CPacket packet, CallbackInfo ci) {
+        ClientWorld world = largerworld$worldOnClientThread();
+        if (world != null
+                && ClientEntityHandoff.shouldIgnoreTrackerUpdate(packet.getEntity(world))) {
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "onEntityPosition", at = @At("HEAD"), cancellable = true)
+    private void largerworld$ignoreStalePosition(
+            EntityPositionS2CPacket packet, CallbackInfo ci) {
+        if (largerworld$ignoreTrackerUpdate(packet.entityId())) {
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "onEntityPositionSync", at = @At("HEAD"), cancellable = true)
+    private void largerworld$ignoreStalePositionSync(
+            EntityPositionSyncS2CPacket packet, CallbackInfo ci) {
+        if (largerworld$ignoreTrackerUpdate(packet.id())) {
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "onEntityVelocityUpdate", at = @At("HEAD"), cancellable = true)
+    private void largerworld$ignoreStaleVelocity(
+            EntityVelocityUpdateS2CPacket packet, CallbackInfo ci) {
+        if (largerworld$ignoreTrackerUpdate(packet.getEntityId())) {
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "onEntityTrackerUpdate", at = @At("HEAD"), cancellable = true)
+    private void largerworld$ignoreStaleTrackedData(
+            EntityTrackerUpdateS2CPacket packet, CallbackInfo ci) {
+        if (largerworld$ignoreTrackerUpdate(packet.id())) {
+            ci.cancel();
+        }
+    }
+
+    @Unique
+    private boolean largerworld$ignoreTrackerUpdate(int entityId) {
+        ClientWorld world = largerworld$worldOnClientThread();
+        return world != null && ClientEntityHandoff.shouldIgnoreTrackerUpdate(
+                world.getEntityById(entityId));
+    }
+
+    @Unique
+    private ClientWorld largerworld$worldOnClientThread() {
+        net.minecraft.client.MinecraftClient client =
+                net.minecraft.client.MinecraftClient.getInstance();
+        return client.isOnThread()
+                ? ((ClientPlayNetworkHandler) (Object) this).getWorld()
+                : null;
     }
 }

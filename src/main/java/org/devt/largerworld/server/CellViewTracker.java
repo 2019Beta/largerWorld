@@ -9,6 +9,8 @@ import net.minecraft.network.packet.Packet;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.network.ChunkFilter;
+import net.minecraft.server.world.ChunkHolder;
+import net.minecraft.server.world.OptionalChunk;
 import net.minecraft.server.world.ServerChunkLoadingManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
@@ -22,8 +24,10 @@ import org.devt.largerworld.world.CellWorldManager;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,7 +38,16 @@ import java.util.UUID;
  * neighboring cells. Vanilla remains responsible for the current cell.
  */
 public final class CellViewTracker {
+    /**
+     * Full chunk packets are fairly expensive for both the integrated server and
+     * the render thread.  Keep one tick from dumping a newly generated view in a
+     * single burst while still filling the seam in well under a second.
+     */
+    private static final int MAX_SHADOW_CHUNKS_SENT_PER_TICK = 16;
     private static final Map<UUID, PlayerState> STATES = new HashMap<>();
+    /** Ticket identity no longer includes a player key, so watches share one ref-counted ticket. */
+    private static final Map<ServerWorld, Map<Long, Integer>> SHADOW_TICKET_REFS =
+            new IdentityHashMap<>();
 
     private CellViewTracker() {
     }
@@ -73,7 +86,7 @@ public final class CellViewTracker {
         int radius = Math.max(2, player.getViewDistance());
         Set<VirtualChunkPos> desired = desiredShadowChunks(currentCell, centerX, centerZ, radius);
 
-        state.updateWatches(server, desired);
+        state.updateWatches(server, currentCell, centerX, centerZ, desired);
         state.updateEntities();
         state.tickHandoff();
     }
@@ -307,7 +320,7 @@ public final class CellViewTracker {
             this.player = player;
         }
 
-        private void addOrSend(MinecraftServer server, VirtualChunkPos pos) {
+        private Watch ensureWatch(MinecraftServer server, VirtualChunkPos pos) {
             Watch watch = watches.get(pos);
             if (watch == null) {
                 ServerWorld world = CellWorldManager.getOrCreate(
@@ -315,30 +328,85 @@ public final class CellViewTracker {
                         CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
                         pos.cell());
                 ChunkPos local = new ChunkPos(pos.localX(), pos.localZ());
-                addTickets(world, local);
                 watch = new Watch(world, local);
                 watches.put(pos, watch);
+                retainTicket(world, local);
+                // addTicket() alone only changes the distance-level graph. In
+                // dynamically created cell worlds that graph may not be pumped
+                // until a later world tick. This API immediately schedules the
+                // accessible-chunk future. The separately retained ticket is
+                // released explicitly when this watch leaves the player's view.
+                watch.loadingFuture = world.getChunkManager()
+                        .addChunkLoadingTicket(CellChunkTickets.SHADOW, local, 0);
             }
-            addTickets(watch.world, watch.localPos);
-            if (!watch.sent) {
-                WorldChunk chunk = watch.world.getChunkManager().chunkLoadingManager
-                        .getPostProcessedChunk(watch.localPos.toLong());
-                if (chunk != null) {
-                    CellPacketRouting.sendFrom(player, watch.world,
-                            new ChunkDataS2CPacket(chunk, watch.world.getLightingProvider(), null, null));
-                    watch.sent = true;
-                }
-            }
+            return watch;
         }
 
-        private void updateWatches(MinecraftServer server, Set<VirtualChunkPos> desired) {
+        private boolean sendIfReady(Watch watch) {
+            if (watch.sent) {
+                return false;
+            }
+            ServerChunkLoadingManager loadingManager =
+                    watch.world.getChunkManager().chunkLoadingManager;
+            ChunkHolder holder = loadingManager.getCurrentChunkHolder(
+                    watch.localPos.toLong());
+            if (holder == null || !holder.getPostProcessingFuture().isDone()
+                    || !holder.getAccessibleFuture().isDone()) {
+                return false;
+            }
+
+            // ChunkHolder#getPostProcessedChunk() delegates to getWorldChunk(),
+            // which reads the BLOCK_TICKING future. Shadow views deliberately
+            // hold loading-only tickets, so that method stays null until the
+            // player crosses into the cell and vanilla adds a simulation
+            // ticket. Read the accessible future instead: it is exactly the
+            // level required to serialize and render a full chunk.
+            OptionalChunk<WorldChunk> accessible =
+                    holder.getAccessibleFuture().getNow(null);
+            WorldChunk chunk = accessible == null ? null : accessible.orElse(null);
+            if (chunk == null) {
+                return false;
+            }
+            CellPacketRouting.sendFrom(player, watch.world,
+                    new ChunkDataS2CPacket(chunk, watch.world.getLightingProvider(), null, null));
+            watch.sent = true;
+            watch.loadingFuture = null;
+            return true;
+        }
+
+        private void updateWatches(
+                MinecraftServer server,
+                CellPos currentCell,
+                int centerX,
+                int centerZ,
+                Set<VirtualChunkPos> desired) {
             for (VirtualChunkPos old : new ArrayList<>(watches.keySet())) {
                 if (!desired.contains(old)) {
                     remove(old);
                 }
             }
-            for (VirtualChunkPos wanted : desired) {
-                addOrSend(server, wanted);
+
+            List<VirtualChunkPos> ordered = new ArrayList<>(desired);
+            ordered.sort(Comparator.comparingLong(pos -> {
+                long dx = (long) pos.clientX(currentCell) - centerX;
+                long dz = (long) pos.clientZ(currentCell) - centerZ;
+                return dx * dx + dz * dz;
+            }));
+
+            // Request every needed chunk up front so terrain-generation
+            // dependencies can run in parallel, but deliver ready chunks near
+            // to far and with a per-tick packet budget.
+            for (VirtualChunkPos wanted : ordered) {
+                ensureWatch(server, wanted);
+            }
+            int sent = 0;
+            for (VirtualChunkPos wanted : ordered) {
+                if (sent >= MAX_SHADOW_CHUNKS_SENT_PER_TICK) {
+                    break;
+                }
+                if (sendIfReady(watches.get(wanted))) {
+                    sent++;
+                }
             }
         }
 
@@ -351,8 +419,8 @@ public final class CellViewTracker {
                         pos.cell());
                 watch = new Watch(world, new ChunkPos(pos.localX(), pos.localZ()));
                 watches.put(pos, watch);
+                retainTicket(watch.world, watch.localPos);
             }
-            addTickets(watch.world, watch.localPos);
             watch.sent = true;
         }
 
@@ -416,6 +484,7 @@ public final class CellViewTracker {
             if (watch.sent && !handedToVanilla) {
                 CellPacketRouting.sendUnload(player, watch.world, new UnloadChunkS2CPacket(watch.localPos));
             }
+            releaseTicket(watch.world, watch.localPos);
         }
 
         private void updateEntities() {
@@ -482,6 +551,9 @@ public final class CellViewTracker {
                 stopTracking(tracker, false);
             }
             trackedEntities.clear();
+            for (Watch watch : watches.values()) {
+                releaseTicket(watch.world, watch.localPos);
+            }
             watches.clear();
             clearHandoff();
             CellInteractionRouting.forget(player);
@@ -499,13 +571,40 @@ public final class CellViewTracker {
         }
     }
 
-    private static void addTickets(ServerWorld world, ChunkPos pos) {
-        world.getChunkManager().addTicket(CellChunkTickets.SHADOW, pos, 0);
+    private static void retainTicket(ServerWorld world, ChunkPos pos) {
+        Map<Long, Integer> refs = SHADOW_TICKET_REFS.computeIfAbsent(
+                world, ignored -> new HashMap<>());
+        long key = pos.toLong();
+        int previous = refs.getOrDefault(key, 0);
+        refs.put(key, previous + 1);
+        if (previous == 0) {
+            world.getChunkManager().addTicket(CellChunkTickets.SHADOW, pos, 0);
+        }
+    }
+
+    private static void releaseTicket(ServerWorld world, ChunkPos pos) {
+        Map<Long, Integer> refs = SHADOW_TICKET_REFS.get(world);
+        if (refs == null) {
+            return;
+        }
+        long key = pos.toLong();
+        int remaining = refs.getOrDefault(key, 0) - 1;
+        if (remaining > 0) {
+            refs.put(key, remaining);
+            return;
+        }
+        refs.remove(key);
+        world.getChunkManager().removeTicket(CellChunkTickets.SHADOW, pos, 0);
+        if (refs.isEmpty()) {
+            SHADOW_TICKET_REFS.remove(world);
+        }
     }
 
     private static final class Watch {
         private final ServerWorld world;
         private final ChunkPos localPos;
+        /** Keeps the explicit load request reachable until the chunk is accessible. */
+        private java.util.concurrent.CompletableFuture<?> loadingFuture;
         private boolean sent;
 
         private Watch(ServerWorld world, ChunkPos localPos) {
