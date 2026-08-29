@@ -18,6 +18,7 @@ import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.coordinate.VirtualChunkPos;
 import org.devt.largerworld.network.CellPacketPayload;
+import org.devt.largerworld.network.ContinuousEntityHandoffPayload;
 import org.devt.largerworld.network.EntityHandoffPayload;
 import org.devt.largerworld.world.CellWorldKey;
 import net.minecraft.util.hit.BlockHitResult;
@@ -92,7 +93,8 @@ public final class CellPacketRouting {
         }
         if (packet instanceof CustomPayloadS2CPacket custom
                 && (custom.payload() instanceof CellPacketPayload
-                || custom.payload() instanceof EntityHandoffPayload)) {
+                || custom.payload() instanceof EntityHandoffPayload
+                || custom.payload() instanceof ContinuousEntityHandoffPayload)) {
             return packet;
         }
         // Bundle packets are synthetic transport containers and are not part of

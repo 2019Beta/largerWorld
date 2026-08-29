@@ -3,6 +3,7 @@ package org.devt.largerworld.server;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.mob.MobEntity;
+import net.minecraft.entity.passive.CamelEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
@@ -20,6 +21,7 @@ import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
 import org.devt.largerworld.mixin.ServerChunkLoadingManagerAccessor;
 import org.devt.largerworld.mixin.ServerPlayNetworkHandlerAccessor;
+import org.devt.largerworld.network.ContinuousEntityHandoffPayload;
 import org.devt.largerworld.network.EntityHandoffPayload;
 
 import java.util.ArrayList;
@@ -32,6 +34,10 @@ import java.util.UUID;
 
 /** Migrates complete entity/passenger graphs between independently stored cell worlds. */
 public final class OriginShiftService {
+    private static final Map<UUID, RidingGraphSnapshot> LAST_RIDING_GRAPHS =
+            new HashMap<>();
+    private static final Map<UUID, UUID> LAST_MEMBER_ROOTS = new HashMap<>();
+
     private OriginShiftService() {
     }
 
@@ -41,6 +47,7 @@ public final class OriginShiftService {
         }
 
         Set<UUID> handledRoots = new HashSet<>();
+        Set<UUID> seenMembers = new HashSet<>();
         ArrayList<ServerWorld> worldSnapshot = new ArrayList<>();
         server.getWorlds().forEach(worldSnapshot::add);
         for (ServerWorld world : worldSnapshot) {
@@ -54,9 +61,40 @@ public final class OriginShiftService {
                 if (!handledRoots.add(root.getUuid())) {
                     continue;
                 }
+                RidingGraphSnapshot graph = RidingGraphSnapshot.capture(root);
+                seenMembers.addAll(graph.members());
+                RidingGraphSnapshot previous = LAST_RIDING_GRAPHS.put(root.getUuid(), graph);
+                boolean membershipChanged = previous == null
+                        ? graph.members().size() > 1
+                        : !previous.members().equals(graph.members());
+                boolean rootChanged = graph.members().stream().anyMatch(member -> {
+                    UUID previousRoot = LAST_MEMBER_ROOTS.get(member);
+                    return previousRoot != null && !previousRoot.equals(root.getUuid());
+                });
+                for (UUID member : graph.members()) {
+                    LAST_MEMBER_ROOTS.put(member, root.getUuid());
+                }
+
+                boolean playerGraphChanged = membershipChanged || rootChanged;
+                boolean involvedPlayer = graph.containsPlayer()
+                        || previous != null && previous.containsPlayer();
+                if (playerGraphChanged && involvedPlayer && isOutsideCell(root)) {
+                    // Mount/dismount and boundary tracking can occur in the same
+                    // server tick. Let the graph stabilize for one complete tick
+                    // so it cannot start as an ordinary entity handoff and finish
+                    // as a player vehicle transaction.
+                    Largerworld.LOGGER.info(
+                            "[cell-handoff-server] DEFER_RIDING_GRAPH root={} id={} "
+                                    + "members={} previousMembers={}",
+                            root.getUuid(), root.getId(), graph.members(),
+                            previous == null ? null : previous.members());
+                    continue;
+                }
                 shiftIfNeeded(root);
             }
         }
+        LAST_RIDING_GRAPHS.keySet().retainAll(handledRoots);
+        LAST_MEMBER_ROOTS.keySet().retainAll(seenMembers);
     }
 
     private static void preloadApproachingCells(MinecraftServer server) {
@@ -158,10 +196,17 @@ public final class OriginShiftService {
                 && sourceMembers.stream().anyMatch(
                 member -> member instanceof ServerPlayerEntity player
                         && player.hasVehicle());
-        // Only a ridden graph needs to preserve the existing client objects.
-        // Ordinary projectiles and mobs must complete vanilla's destroy/spawn
-        // lifecycle so the destination spawn can install authoritative state.
+        boolean graphContainsPlayer = sourceMembers.stream()
+                .anyMatch(ServerPlayerEntity.class::isInstance);
+        // A ridden graph keeps the existing client objects and ignores its
+        // duplicate destination spawns. Other continuously moving, non-player
+        // graphs keep their client objects too, but consume the authoritative
+        // destination spawn into those same objects.
         boolean preserveClientIdentity = playerControlledGraph;
+        boolean preserveContinuousEntity = continuousMovement
+                && !graphContainsPlayer;
+        boolean protectSourceClientEntity =
+                preserveClientIdentity || preserveContinuousEntity;
         Map<UUID, Vec3d> velocities = new HashMap<>();
         Map<UUID, UUID> mobTargetIds = new HashMap<>();
         Map<UUID, LivingEntity> mobTargetReferences = new HashMap<>();
@@ -180,18 +225,28 @@ public final class OriginShiftService {
         }
         Largerworld.LOGGER.info(
                 "[cross-velocity] SNAPSHOT type={} id={} uuid={} source={} target={} vel={} "
-                        + "continuous={} identity={}",
+                        + "continuous={} identity={} continuousEntity={}",
                 root.getType(), root.getId(), root.getUuid(),
                 CellWorldKey.cell(sourceWorld.getRegistryKey()), targetCell,
-                root.getVelocity(), continuousMovement, preserveClientIdentity);
+                root.getVelocity(), continuousMovement, preserveClientIdentity,
+                preserveContinuousEntity);
+        sourceMembers.forEach(member -> debugCamel("BEFORE_TELEPORT", member));
 
-        if (preserveClientIdentity) {
-            // Install both halves of the identity guard before changing any
-            // tracker ownership: mark source listeners for silent retirement,
-            // then tell their clients to retain the matching id/UUID.
+        if (protectSourceClientEntity) {
+            // Retire the source tracker without creating a client-visible gap.
+            // Both modes retain the object. A normal continuous entity later
+            // consumes its authoritative target spawn into that same object.
             protectSourceTrackerListeners(sourceWorld, sourceMembers);
+        }
+        if (preserveClientIdentity) {
             sendClientHandoff(
                     EntityHandoffPayload.Phase.BEGIN,
+                    sourceWorld,
+                    targetCell,
+                    sourceMembers);
+        } else if (preserveContinuousEntity) {
+            sendContinuousEntityHandoff(
+                    ContinuousEntityHandoffPayload.Phase.BEGIN,
                     sourceWorld,
                     targetCell,
                     sourceMembers);
@@ -222,8 +277,15 @@ public final class OriginShiftService {
                 SeamlessCellTeleport.withCellHandoff(
                         continuousMovement, () -> root.teleportTo(target)));
         if (teleportedRoot == null) {
-            if (preserveClientIdentity) {
+            if (protectSourceClientEntity) {
                 abortSourceTrackerProtection(sourceWorld, sourceMembers);
+            }
+            if (preserveContinuousEntity) {
+                sendContinuousEntityHandoff(
+                        ContinuousEntityHandoffPayload.Phase.ABORT,
+                        sourceWorld,
+                        targetCell,
+                        sourceMembers);
             }
             if (continuousMovement) {
                 for (Entity member : sourceMembers) {
@@ -241,6 +303,13 @@ public final class OriginShiftService {
                 teleportedRoot.getType(), teleportedRoot.getId(),
                 teleportedRoot.getUuid(), teleportedRoot.getVelocity());
         List<Entity> targetMembers = teleportedRoot.streamSelfAndPassengers().toList();
+        if (continuousMovement) {
+            targetMembers.stream()
+                    .filter(CamelEntity.class::isInstance)
+                    .map(CamelEntity.class::cast)
+                    .forEach(CamelHandoffGrace::mark);
+        }
+        targetMembers.forEach(member -> debugCamel("AFTER_TELEPORT", member));
 
         // Update the synchronized logical cell only after teleportTo has rebased
         // the network origin and completed the vanilla world change. Setting it
@@ -314,6 +383,7 @@ public final class OriginShiftService {
                     teleportedRoot.getUuid(), teleportedRoot.getVelocity(),
                     teleportedRoot.velocityDirty);
         }
+        targetMembers.forEach(member -> debugCamel("AFTER_RESTORE", member));
 
         // VehicleMove validation keeps both an object reference and local-cell
         // coordinates from the previous tick. Rebase them immediately; waiting
@@ -372,6 +442,14 @@ public final class OriginShiftService {
         return true;
     }
 
+    private static boolean isOutsideCell(Entity root) {
+        ServerWorld currentWorld = (ServerWorld) root.getEntityWorld();
+        CellPos currentCell = CellWorldKey.cell(currentWorld.getRegistryKey());
+        return !VirtualPosition.normalize(
+                currentCell, root.getX(), root.getY(), root.getZ())
+                .isInCell(currentCell);
+    }
+
     private static void sendClientHandoff(
             EntityHandoffPayload.Phase phase,
             ServerWorld sendingWorld,
@@ -406,7 +484,14 @@ public final class OriginShiftService {
                         phase, member.getType(), member.getId(), member.getUuid(),
                         graphPlayers.stream().map(player -> player.getUuid().toString()).toList());
             }
-            sendingWorld.getChunkManager().sendToNearbyPlayers(member, packet);
+            if (member instanceof ServerPlayerEntity) {
+                // The graph-recipient send above already covers the player
+                // itself; use vanilla's excluding variant to avoid delivering
+                // duplicate BEGIN/COMMIT markers to that same connection.
+                sendingWorld.getChunkManager().sendToOtherNearbyPlayers(member, packet);
+            } else {
+                sendingWorld.getChunkManager().sendToNearbyPlayers(member, packet);
+            }
             if (phase == EntityHandoffPayload.Phase.COMMIT) {
                 CellViewTracker.sendToShadowPlayers(
                         sendingWorld,
@@ -418,6 +503,42 @@ public final class OriginShiftService {
                         packet);
             }
         }
+    }
+
+    private static void sendContinuousEntityHandoff(
+            ContinuousEntityHandoffPayload.Phase phase,
+            ServerWorld sourceWorld,
+            CellPos targetCell,
+            List<Entity> members) {
+        CellPos sourceCell = CellWorldKey.cell(sourceWorld.getRegistryKey());
+        for (Entity member : members) {
+            var packet = new CustomPayloadS2CPacket(new ContinuousEntityHandoffPayload(
+                    phase,
+                    member.getId(),
+                    member.getUuid(),
+                    sourceCell,
+                    targetCell));
+            Largerworld.LOGGER.info(
+                    "[continuous-handoff-server] MARKER phase={} type={} id={} uuid={} "
+                            + "source={} target={}",
+                    phase, member.getType(), member.getId(), member.getUuid(),
+                    sourceCell, targetCell);
+            sourceWorld.getChunkManager().sendToNearbyPlayers(member, packet);
+        }
+    }
+
+    private static void debugCamel(String phase, Entity entity) {
+        if (!(entity instanceof CamelEntity camel)) {
+            return;
+        }
+        Largerworld.LOGGER.info(
+                "[cross-camel] phase={} id={} worldTime={} pose={} sitting={} "
+                        + "visualSitting={} changing={} lastPoseTick={} poseTime={} passengers={}",
+                phase, camel.getId(), camel.getEntityWorld().getTime(), camel.getPose(),
+                camel.isSitting(), camel.shouldUpdateSittingAnimations(),
+                camel.isChangingPose(),
+                camel.getDataTracker().get(CamelEntity.LAST_POSE_TICK),
+                camel.getTimeSinceLastPoseTick(), camel.getPassengerList().size());
     }
 
     private static void protectSourceTrackerListeners(
@@ -449,6 +570,18 @@ public final class OriginShiftService {
             }
         }
         return result;
+    }
+
+    private record RidingGraphSnapshot(Set<UUID> members, boolean containsPlayer) {
+        private static RidingGraphSnapshot capture(Entity root) {
+            Set<UUID> members = new HashSet<>();
+            boolean containsPlayer = false;
+            for (Entity member : root.streamSelfAndPassengers().toList()) {
+                members.add(member.getUuid());
+                containsPlayer |= member instanceof ServerPlayerEntity;
+            }
+            return new RidingGraphSnapshot(Set.copyOf(members), containsPlayer);
+        }
     }
 
 }

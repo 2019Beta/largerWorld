@@ -1,6 +1,9 @@
 package org.devt.largerworld.client.network;
 
+import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
+import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.network.EntityHandoffPayload;
@@ -23,6 +26,12 @@ public final class ClientEntityHandoff {
     private static final Map<Integer, Pending> PENDING = new ConcurrentHashMap<>();
 
     private ClientEntityHandoff() {
+    }
+
+    public enum PassengerDecision {
+        APPLY,
+        DROP,
+        HOLD
     }
 
     public static void accept(EntityHandoffPayload payload) {
@@ -51,6 +60,9 @@ public final class ClientEntityHandoff {
         Pending pending = PENDING.get(payload.entityId());
         boolean accepted = pending != null && pending.matches(payload);
         if (accepted) {
+            if (!pending.committed) {
+                pending.passengerReplayDelayTicks = 1;
+            }
             pending.committed = true;
         }
         Largerworld.LOGGER.info(
@@ -100,6 +112,13 @@ public final class ClientEntityHandoff {
                 && (pending.committed || pending.targetTrackerSeen);
     }
 
+    /** Whether the current packet belongs to the retained entity's target tracker. */
+    public static boolean isTargetTrackerUpdate(Entity entity) {
+        Pending pending = validPending(entity);
+        return pending != null
+                && pending.targetCell.equals(ClientCellPacketContext.sourceCell());
+    }
+
     /** Human-readable state used by the bounded passenger handoff diagnostic. */
     public static String debugState(int entityId, Entity entity) {
         Pending pending = validPending(entityId, entity);
@@ -109,33 +128,35 @@ public final class ClientEntityHandoff {
         return pending.committed ? "COMMITTED" : "BEGIN";
     }
 
-    /** Suppresses temporary snapshots until the server commits the rebuilt graph. */
-    public static boolean shouldIgnorePassengerUpdate(
+    /** Classifies passenger snapshots without losing the final target relation. */
+    public static PassengerDecision passengerDecision(
             int entityId, Entity entity, int[] passengerIds) {
         Pending pending = validPending(entityId, entity);
         if (pending == null) {
-            return false;
+            return PassengerDecision.APPLY;
         }
-
-        // The source tag is not a reliable phase marker inside vanilla's
-        // cross-world passenger traversal: temporary detach packets can inherit
-        // the outer target-world context. Until the ordered COMMIT is applied,
-        // every passenger snapshot is transitional and must be suppressed.
-        if (!pending.committed) {
-            return true;
+        if (pending.replayingPassengers) {
+            return PassengerDecision.APPLY;
         }
 
         CellPos packetSource = ClientCellPacketContext.sourceCell();
+        if (!pending.committed) {
+            // A target tracker may publish the rebuilt graph before its vehicle
+            // spawn is visible. Keep the newest target snapshot for replay;
+            // source snapshots belong to the graph being retired.
+            return pending.targetCell.equals(packetSource)
+                    ? PassengerDecision.HOLD
+                    : PassengerDecision.DROP;
+        }
+
         if (pending.sourceCell.equals(packetSource)) {
-            return true;
+            return PassengerDecision.DROP;
         }
         if (!pending.targetCell.equals(packetSource)) {
-            return false;
+            return PassengerDecision.APPLY;
         }
         if (entity == null) {
-            // The final target snapshot will be deferred by the packet mixin
-            // until the retained/replacement entity is available again.
-            return false;
+            return PassengerDecision.HOLD;
         }
 
         // COMMIT, rather than a replacement spawn, establishes target tracker
@@ -147,7 +168,67 @@ public final class ClientEntityHandoff {
                 .mapToInt(Entity::getId)
                 .toArray();
         pending.targetTrackerSeen = true;
-        return Arrays.equals(currentPassengerIds, passengerIds);
+        pending.deferredPassengers = null;
+        return Arrays.equals(currentPassengerIds, passengerIds)
+                ? PassengerDecision.DROP
+                : PassengerDecision.APPLY;
+    }
+
+    /** Retains the newest target passenger snapshot until its graph exists. */
+    public static void deferPassengerUpdate(EntityPassengersSetS2CPacket packet) {
+        Pending pending = validPending(packet.getEntityId(), null);
+        if (pending != null) {
+            pending.deferredPassengers = packet;
+        }
+    }
+
+    /** Replays committed passenger snapshots once vehicle and passengers exist. */
+    public static void tick(ClientPlayNetworkHandler handler) {
+        prune();
+        if (handler == null) {
+            return;
+        }
+        ClientWorld world = handler.getWorld();
+        if (world == null) {
+            return;
+        }
+        for (Map.Entry<Integer, Pending> entry : PENDING.entrySet()) {
+            Pending pending = entry.getValue();
+            EntityPassengersSetS2CPacket packet = pending.deferredPassengers;
+            if (!pending.committed || packet == null) {
+                continue;
+            }
+            if (pending.passengerReplayDelayTicks > 0) {
+                pending.passengerReplayDelayTicks--;
+                continue;
+            }
+            Entity vehicle = world.getEntityById(entry.getKey());
+            if (vehicle == null || !pending.uuid.equals(vehicle.getUuid())) {
+                continue;
+            }
+            boolean graphReady = true;
+            for (int passengerId : packet.getPassengerIds()) {
+                if (world.getEntityById(passengerId) == null) {
+                    graphReady = false;
+                    break;
+                }
+            }
+            if (!graphReady || pending.deferredPassengers != packet) {
+                continue;
+            }
+
+            pending.deferredPassengers = null;
+            pending.replayingPassengers = true;
+            Largerworld.LOGGER.info(
+                    "[cell-handoff-client] PASSENGERS vehicle={} uuid={} "
+                            + "state=COMMITTED decision=REPLAY",
+                    vehicle.getId(), vehicle.getUuid());
+            try {
+                handler.onEntityPassengersSet(packet);
+            } finally {
+                pending.replayingPassengers = false;
+            }
+        }
     }
 
     private static Pending validPending(Entity entity) {
@@ -181,6 +262,9 @@ public final class ClientEntityHandoff {
         private final long expiresAtNanos;
         private volatile boolean committed;
         private volatile boolean targetTrackerSeen;
+        private volatile EntityPassengersSetS2CPacket deferredPassengers;
+        private volatile boolean replayingPassengers;
+        private volatile int passengerReplayDelayTicks;
 
         private Pending(
                 UUID uuid, CellPos sourceCell, CellPos targetCell, long expiresAtNanos) {

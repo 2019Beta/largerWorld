@@ -205,15 +205,37 @@ public final class CellViewTracker {
      */
     public static boolean shouldHoldCrossingControlledVehicle(
             ServerPlayerEntity player, Entity entity) {
-        if (entity.getEntityWorld() != player.getEntityWorld()
-                || !player.hasVehicle()
-                || player.getRootVehicle() != entity) {
+        if (entity.getEntityWorld() != player.getEntityWorld()) {
             return false;
         }
 
-        CellPos sourceCell = CellWorldKey.cell(entity.getEntityWorld().getRegistryKey());
+        Entity root = entity.getRootVehicle();
+        boolean graphContainsPlayer = root.streamSelfAndPassengers()
+                .anyMatch(ServerPlayerEntity.class::isInstance);
+        if (!graphContainsPlayer) {
+            return false;
+        }
+        CellPos sourceCell = CellWorldKey.cell(root.getEntityWorld().getRegistryKey());
         VirtualPosition normalized = VirtualPosition.normalize(
-                sourceCell, entity.getX(), entity.getY(), entity.getZ());
+                sourceCell, root.getX(), root.getY(), root.getZ());
+        return !normalized.isInCell(sourceCell);
+    }
+
+    /** Holds a crossing non-player entity until its continuous marker is installed. */
+    public static boolean shouldHoldCrossingContinuousEntity(
+            ServerPlayerEntity player, Entity entity) {
+        if (entity.getEntityWorld() != player.getEntityWorld()
+                || entity instanceof ServerPlayerEntity) {
+            return false;
+        }
+
+        Entity root = entity.getRootVehicle();
+        if (root.streamSelfAndPassengers().anyMatch(ServerPlayerEntity.class::isInstance)) {
+            return false;
+        }
+        CellPos sourceCell = CellWorldKey.cell(root.getEntityWorld().getRegistryKey());
+        VirtualPosition normalized = VirtualPosition.normalize(
+                sourceCell, root.getX(), root.getY(), root.getZ());
         return !normalized.isInCell(sourceCell);
     }
 

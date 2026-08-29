@@ -9,6 +9,7 @@
     "ChunkCenterPacketMixin",
     "ChunkDataPacketMixin",
     "ChunkDeltaPacketMixin",
+    "DataTrackerAccessor",
     "DoublePositionPacketMixin",
     "EntityPositionPacketMixin",
     "EntityPositionSyncPacketMixin",
