@@ -18,6 +18,7 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.chunk.WorldChunk;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualChunkPos;
+import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.mixin.ServerChunkLoadingManagerAccessor;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
@@ -196,6 +197,24 @@ public final class CellViewTracker {
                 player,
                 CellWorldKey.cell(entity.getEntityWorld().getRegistryKey()),
                 entityChunk);
+    }
+
+    /**
+     * Covers the part of a ridden cell crossing before {@link #prepareTransition}
+     * can install normal handoff ownership at the end of the server tick.
+     */
+    public static boolean shouldHoldCrossingControlledVehicle(
+            ServerPlayerEntity player, Entity entity) {
+        if (entity.getEntityWorld() != player.getEntityWorld()
+                || !player.hasVehicle()
+                || player.getRootVehicle() != entity) {
+            return false;
+        }
+
+        CellPos sourceCell = CellWorldKey.cell(entity.getEntityWorld().getRegistryKey());
+        VirtualPosition normalized = VirtualPosition.normalize(
+                sourceCell, entity.getX(), entity.getY(), entity.getZ());
+        return !normalized.isInCell(sourceCell);
     }
 
     public static boolean shouldRetain(ServerPlayerEntity player, CellPos source, ChunkPos localPos) {

@@ -154,14 +154,14 @@ public final class OriginShiftService {
             return false;
         }
         List<Entity> sourceMembers = root.streamSelfAndPassengers().toList();
-        // Every natural cell crossing is one continuous client-side entity
-        // lifecycle. Commands and other explicit teleports still use vanilla's
-        // destroy/spawn lifecycle because continuousMovement is false there.
-        boolean preserveClientIdentity = continuousMovement;
         boolean playerControlledGraph = continuousMovement
                 && sourceMembers.stream().anyMatch(
                 member -> member instanceof ServerPlayerEntity player
                         && player.hasVehicle());
+        // Only a ridden graph needs to preserve the existing client objects.
+        // Ordinary projectiles and mobs must complete vanilla's destroy/spawn
+        // lifecycle so the destination spawn can install authoritative state.
+        boolean preserveClientIdentity = playerControlledGraph;
         Map<UUID, Vec3d> velocities = new HashMap<>();
         Map<UUID, UUID> mobTargetIds = new HashMap<>();
         Map<UUID, LivingEntity> mobTargetReferences = new HashMap<>();
@@ -178,6 +178,12 @@ public final class OriginShiftService {
                 CellPacketRouting.origin(player);
             }
         }
+        Largerworld.LOGGER.info(
+                "[cross-velocity] SNAPSHOT type={} id={} uuid={} source={} target={} vel={} "
+                        + "continuous={} identity={}",
+                root.getType(), root.getId(), root.getUuid(),
+                CellWorldKey.cell(sourceWorld.getRegistryKey()), targetCell,
+                root.getVelocity(), continuousMovement, preserveClientIdentity);
 
         if (preserveClientIdentity) {
             // Install both halves of the identity guard before changing any
@@ -230,6 +236,10 @@ public final class OriginShiftService {
                     root.getUuid(), targetCell);
             return false;
         }
+        Largerworld.LOGGER.info(
+                "[cross-velocity] AFTER_TELEPORT type={} id={} uuid={} vel={}",
+                teleportedRoot.getType(), teleportedRoot.getId(),
+                teleportedRoot.getUuid(), teleportedRoot.getVelocity());
         List<Entity> targetMembers = teleportedRoot.streamSelfAndPassengers().toList();
 
         // Update the synchronized logical cell only after teleportTo has rebased
@@ -298,6 +308,11 @@ public final class OriginShiftService {
                     && !playerControlledGraph) {
                 teleportedRoot.velocityDirty = true;
             }
+            Largerworld.LOGGER.info(
+                    "[cross-velocity] AFTER_RESTORE type={} id={} uuid={} vel={} dirty={}",
+                    teleportedRoot.getType(), teleportedRoot.getId(),
+                    teleportedRoot.getUuid(), teleportedRoot.getVelocity(),
+                    teleportedRoot.velocityDirty);
         }
 
         // VehicleMove validation keeps both an object reference and local-cell
@@ -387,8 +402,8 @@ public final class OriginShiftService {
             }
             if (!graphPlayers.isEmpty()) {
                 Largerworld.LOGGER.info(
-                        "[cell-handoff-server] MARKER phase={} id={} uuid={} graphRecipients={}",
-                        phase, member.getId(), member.getUuid(),
+                        "[cell-handoff-server] MARKER phase={} type={} id={} uuid={} graphRecipients={}",
+                        phase, member.getType(), member.getId(), member.getUuid(),
                         graphPlayers.stream().map(player -> player.getUuid().toString()).toList());
             }
             sendingWorld.getChunkManager().sendToNearbyPlayers(member, packet);

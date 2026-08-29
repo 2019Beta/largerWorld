@@ -116,8 +116,16 @@ public abstract class EntityTrackerMixin implements CellEntityTracker {
             ci.cancel();
             return;
         }
+        boolean crossingControlledVehicle =
+                CellViewTracker.shouldHoldCrossingControlledVehicle(player, entity);
         if (largerworld$getShadowListeners().contains(player.networkHandler)
-                || CellViewTracker.shouldHoldCurrentCellEntity(player, entity)) {
+                || CellViewTracker.shouldHoldCurrentCellEntity(player, entity)
+                || crossingControlledVehicle) {
+            if (crossingControlledVehicle) {
+                Largerworld.LOGGER.info(
+                        "[cell-handoff-server] PRE_BEGIN_HOLD type={} id={} uuid={} player={}",
+                        entity.getType(), entity.getId(), entity.getUuid(), player.getUuid());
+            }
             ci.cancel();
         }
     }

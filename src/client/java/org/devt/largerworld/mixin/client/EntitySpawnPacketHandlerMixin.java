@@ -4,6 +4,7 @@ import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.projectile.ProjectileEntity;
 import net.minecraft.network.packet.s2c.play.EntitiesDestroyS2CPacket;
 import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
 import net.minecraft.network.packet.s2c.play.EntityPositionS2CPacket;
@@ -48,9 +49,12 @@ public abstract class EntitySpawnPacketHandlerMixin {
                 && existing.getUuid().equals(packet.getUuid())
                 && ClientEntityHandoff.shouldIgnoreSpawn(existing);
         Largerworld.LOGGER.info(
-                "[cell-handoff-client] SPAWN id={} uuid={} source={} existingUuid={} state={} decision={}",
-                packet.getEntityId(), packet.getUuid(), ClientCellPacketContext.sourceCell(),
-                existing == null ? null : existing.getUuid(), handoffState,
+                "[cell-handoff-client] SPAWN type={} id={} uuid={} source={} existingUuid={} "
+                        + "velocity={} state={} decision={}",
+                packet.getEntityType(), packet.getEntityId(), packet.getUuid(),
+                ClientCellPacketContext.sourceCell(),
+                existing == null ? null : existing.getUuid(), packet.getVelocity(),
+                handoffState,
                 matchingExisting ? "DROP" : "APPLY");
         if (matchingExisting) {
             // This spawn describes the seam position at the instant the server
@@ -82,8 +86,9 @@ public abstract class EntitySpawnPacketHandlerMixin {
             String handoffState = ClientEntityHandoff.debugState(entityId, entity);
             boolean ignore = ClientEntityHandoff.shouldIgnoreDestroy(entityId, entity);
             Largerworld.LOGGER.info(
-                    "[cell-handoff-client] DESTROY id={} uuid={} source={} state={} decision={}",
-                    entityId, entity == null ? null : entity.getUuid(),
+                    "[cell-handoff-client] DESTROY type={} id={} uuid={} source={} state={} decision={}",
+                    entity == null ? null : entity.getType(), entityId,
+                    entity == null ? null : entity.getUuid(),
                     ClientCellPacketContext.sourceCell(), handoffState,
                     ignore ? "DROP" : "APPLY");
             if (ignore) {
@@ -188,7 +193,27 @@ public abstract class EntitySpawnPacketHandlerMixin {
     @Inject(method = "onEntityVelocityUpdate", at = @At("HEAD"), cancellable = true)
     private void largerworld$ignoreStaleVelocity(
             EntityVelocityUpdateS2CPacket packet, CallbackInfo ci) {
-        if (largerworld$ignoreTrackerUpdate(packet.getEntityId())) {
+        ClientWorld world = largerworld$worldOnClientThread();
+        if (world == null) {
+            return;
+        }
+        Entity entity = world.getEntityById(packet.getEntityId());
+        String handoffState = ClientEntityHandoff.debugState(packet.getEntityId(), entity);
+        boolean ignore = ClientEntityHandoff.shouldIgnoreTrackerUpdate(entity);
+        if (entity == null
+                || entity instanceof ProjectileEntity
+                || entity.hasPassengers()
+                || !"NONE".equals(handoffState)) {
+            Largerworld.LOGGER.info(
+                    "[cross-velocity-client] type={} id={} uuid={} source={} state={} "
+                            + "before={} packet={} decision={}",
+                    entity == null ? null : entity.getType(), packet.getEntityId(),
+                    entity == null ? null : entity.getUuid(),
+                    ClientCellPacketContext.sourceCell(), handoffState,
+                    entity == null ? null : entity.getVelocity(), packet.getVelocity(),
+                    ignore ? "DROP" : "APPLY");
+        }
+        if (ignore) {
             ci.cancel();
         }
     }
