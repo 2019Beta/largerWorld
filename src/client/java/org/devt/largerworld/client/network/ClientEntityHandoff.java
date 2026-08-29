@@ -217,6 +217,24 @@ public final class ClientEntityHandoff {
                 continue;
             }
 
+            int[] currentPassengerIds = vehicle.getPassengerList().stream()
+                    .mapToInt(Entity::getId)
+                    .toArray();
+            if (Arrays.equals(currentPassengerIds, packet.getPassengerIds())) {
+                // The retained source graph is already the committed target
+                // graph. Replaying this unchanged packet would make vanilla
+                // remove every passenger and startRiding again. Besides object
+                // churn, that reinitializes local riding/camera state and can
+                // visibly reset the view depending on render timing.
+                pending.deferredPassengers = null;
+                pending.targetTrackerSeen = true;
+                Largerworld.LOGGER.info(
+                        "[cell-handoff-client] PASSENGERS vehicle={} uuid={} "
+                                + "state=COMMITTED decision=DROP_UNCHANGED_REPLAY",
+                        vehicle.getId(), vehicle.getUuid());
+                continue;
+            }
+
             pending.deferredPassengers = null;
             pending.replayingPassengers = true;
             Largerworld.LOGGER.info(

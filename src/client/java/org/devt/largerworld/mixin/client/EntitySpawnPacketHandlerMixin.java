@@ -4,6 +4,7 @@ import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityPose;
 import net.minecraft.entity.data.DataTracker;
 import net.minecraft.entity.passive.CamelEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
@@ -317,9 +318,16 @@ public abstract class EntitySpawnPacketHandlerMixin {
         DataTracker.Entry<?>[] current =
                 ((DataTrackerAccessor) (Object) entity.getDataTracker())
                         .largerworld$getEntries();
+        boolean preserveNewerLocalCamelPose =
+                largerworld$shouldPreserveNewerLocalCamelPose(entity, incoming);
         List<DataTracker.SerializedEntry<?>> filtered = new ArrayList<>(incoming.size());
         for (DataTracker.SerializedEntry<?> entry : incoming) {
             int id = entry.id();
+            if (preserveNewerLocalCamelPose
+                    && (id == CamelEntity.LAST_POSE_TICK.id()
+                    || entry.value() instanceof EntityPose)) {
+                continue;
+            }
             if (id >= 0
                     && id < current.length
                     && current[id] != null
@@ -329,6 +337,47 @@ public abstract class EntitySpawnPacketHandlerMixin {
             filtered.add(entry);
         }
         return filtered;
+    }
+
+    @Unique
+    private boolean largerworld$shouldPreserveNewerLocalCamelPose(
+            Entity entity, List<DataTracker.SerializedEntry<?>> incoming) {
+        if (!(entity instanceof CamelEntity camel)
+                || !ClientEntityHandoff.isTargetTrackerUpdate(camel)
+                || camel.getControllingPassenger()
+                != net.minecraft.client.MinecraftClient.getInstance().player) {
+            return false;
+        }
+
+        Long incomingLastPose = incoming.stream()
+                .filter(entry -> entry.id() == CamelEntity.LAST_POSE_TICK.id())
+                .map(DataTracker.SerializedEntry::value)
+                .filter(Long.class::isInstance)
+                .map(Long.class::cast)
+                .findFirst()
+                .orElse(null);
+        if (incomingLastPose == null) {
+            return false;
+        }
+
+        long currentLastPose =
+                camel.getDataTracker().get(CamelEntity.LAST_POSE_TICK);
+        if (Math.abs(currentLastPose) <= Math.abs(incomingLastPose)) {
+            return false;
+        }
+
+        // A controlled camel changes pose predictively on the controlling
+        // client. Vanilla does not mirror that newer local timestamp back to
+        // the server. Rebuilding the server entity at a cell seam therefore
+        // republishes an older pose snapshot; applying it makes a camel that
+        // has already stood up sit down again. LAST_POSE_TICK is a signed
+        // timestamp, so its absolute value gives us an exact ordering key.
+        Largerworld.LOGGER.info(
+                "[cross-camel-client] phase=PRESERVE_NEWER_LOCAL_POSE id={} "
+                        + "source={} currentLastPose={} incomingLastPose={}",
+                camel.getId(), ClientCellPacketContext.sourceCell(),
+                currentLastPose, incomingLastPose);
+        return true;
     }
 
     @Unique
