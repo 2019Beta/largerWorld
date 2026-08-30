@@ -8,6 +8,7 @@ import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 
 import java.util.Arrays;
+import java.math.BigInteger;
 import java.util.Optional;
 
 /** Reversible encoding of a base dimension and cell into a World registry key. */
@@ -50,8 +51,8 @@ public final class CellWorldKey {
         }
 
         try {
-            long cellX = Long.parseLong(parts[parts.length - 2]);
-            long cellZ = Long.parseLong(parts[parts.length - 1]);
+            BigInteger cellX = new BigInteger(parts[parts.length - 2]);
+            BigInteger cellZ = new BigInteger(parts[parts.length - 1]);
             String basePath = String.join("/", Arrays.copyOfRange(parts, 2, parts.length - 2));
             if (basePath.isEmpty()) {
                 return Optional.empty();

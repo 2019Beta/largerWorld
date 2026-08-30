@@ -35,12 +35,15 @@ block coordinates, so newly generated terrain continues across a seam while all
 persisted positions remain cell-local.
 
 Vanilla exposes noise, biome and several structure sampling coordinates as
-32-bit integers. Larger World folds virtual sampling coordinates modulo 2^32 at
-those API boundaries. This makes generation deterministic for every long-valued
-cell and keeps adjacent samples consecutive; persistent/global player positions
-are not folded.
+32-bit integers, so the vanilla base field is still folded at those API
+boundaries. Larger World additionally samples a continuous density overlay from
+the full arbitrary-precision global lattice coordinate. Carver, decoration and
+region random tokens hash the complete coordinate as well. The combined
+generator has no fixed low-32-bit world period, while the overlay evaluates the
+same function on both sides of every cell seam. Persistent/global player
+positions are never folded.
 
-This only affects chunks generated after the offset layer is installed. Existing
+This only affects chunks generated after the arbitrary-precision layer is installed. Existing
 cell RegionFiles retain their old terrain and must not be mixed with regenerated
 border chunks when checking continuity.
 
@@ -132,3 +135,15 @@ without storing non-canonical positions. Item merge searches and the player's
 collision/pickup pass also query overlapping neighboring cells. These bridges do
 not synchronously create an unloaded cell; as with vanilla behavior, both sides
 must be loaded and ticking for propagation to continue.
+
+Cell coordinates are arbitrary-precision integers. Legacy long-valued player
+attachments remain readable. Network mappings subtract source and origin cells
+exactly before converting a bounded relative result to an int or double. The
+packet representation limits each integer to 512 bytes as a denial-of-service
+guard, without imposing a machine integer width on storage arithmetic.
+
+Dynamic worlds are limited to 256 active cells and 16 new cells per server tick
+by default. Empty cells are saved and closed before removal from the server world
+map; failed saves remain loaded for a later retry. Worldgen and tick-scheduler
+registrations use weak ownership and are explicitly removed after a successful
+close.

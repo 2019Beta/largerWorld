@@ -17,7 +17,12 @@ public abstract class MinecraftServerMixin {
     private void largerworld$loadPersistedCellWorld(
             RegistryKey<World> key, CallbackInfoReturnable<ServerWorld> cir) {
         if (cir.getReturnValue() == null && CellWorldKey.parse(key).isPresent()) {
-            cir.setReturnValue(CellWorldManager.getOrCreate((MinecraftServer) (Object) this, key));
+            try {
+                cir.setReturnValue(CellWorldManager.getOrCreate((MinecraftServer) (Object) this, key));
+            } catch (CellWorldManager.CellCapacityException ignored) {
+                // Leave the vanilla null result in place. Player reconciliation
+                // retries once capacity becomes available.
+            }
         }
     }
 }

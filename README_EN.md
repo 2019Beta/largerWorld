@@ -11,7 +11,7 @@ global = cell * 1,048,576 + local
 local in [-524,288, 524,288)
 ```
 
-The vanilla engine only ever sees local coordinates. `cellX`/`cellZ` are kept as 64-bit integers in player data and synced to the client. Global coordinates are composed with `BigDecimal` when displayed, so the high bits don't get dropped in a `double` conversion.
+The vanilla engine only ever sees local coordinates. `cellX`/`cellZ` are arbitrary-precision integers in player data and on the wire; legacy 64-bit saves remain readable. Global coordinates are composed with `BigDecimal` when displayed, so high bits are never dropped through a `double` conversion.
 
 ## What works now
 
@@ -25,15 +25,17 @@ The vanilla engine only ever sees local coordinates. `cellX`/`cellZ` are kept as
 - Cells survive logout, re-entry, and death, and stay synced to the current client.
 - The HUD shows real XYZ, the cell, and local XZ in the top-left corner. With F3 open the display moves to the bottom so it doesn't cover the vanilla debug overlay.
 - `/largerworld coords` prints exact global coordinates.
-- Admins can use `/largerworld teleport <globalX> <y> <globalZ>` to reach positions past the `long` block-count limit, as long as they fit in `long cell × 2^20`.
+- Admins can use `/largerworld teleport <globalX> <y> <globalZ>` past the `long` block-count limit. Logical coordinates have no fixed integer width; the wire format applies a per-coordinate byte limit to prevent malicious allocations.
 
 ## Known limitations
 
-The network coordinate origin normally stays put within a connection, so the client world doesn't shift on every border crossing. When a long-range teleport or repeated crossing approaches the vanilla client safe range (~30,000,000 blocks), the server resets the origin to the target cell and forces one client world reload. Stored coordinates stay `long cell × 2^20`.
+The network coordinate origin normally stays put within a connection, so the client world doesn't shift on every border crossing. When a long-range teleport or repeated crossing approaches the vanilla client safe range (~30,000,000 blocks), the server resets the origin to the target cell and forces one client world reload. Relative coordinates subtract arbitrary-precision cells before conversion to client-local numeric types.
 
 Block, block-entity, and lighting changes in neighboring cells reuse vanilla single-block, section-delta, and light-update packets, so a small change no longer rebuilds the entire client chunk. Sign editors opened across a cell boundary retain a remote editing session; independent position-based editor packets for command blocks, structure blocks, jigsaws, and test blocks are routed to their owning cell as well.
 
-Generation coordinate offsets only affect newly generated chunks. The vanilla worldgen API takes 32-bit horizontal coordinates, so sample coordinates beyond that range fold deterministically to their low 32 bits. Stored positions and displayed global coordinates keep full precision. Region files from cells generated before an upgrade are not rewritten; test boundary cases in a fresh world or in cells that haven't been generated yet.
+Generation changes only affect newly generated chunks. Vanilla base terrain still passes through 32-bit APIs, but distant generation now adds a continuous density field hashed directly from arbitrary-precision global lattice coordinates. Carver, decoration, and region randomness also includes all high bits, removing the old fixed `2^32`/`2^36` complete-world period while keeping the density overlay continuous across cell seams. Existing region files are not rewritten.
+
+By default the server keeps at most 256 dynamic cells active and creates at most 16 per tick. JVM properties `largerworld.maxActiveCells` and `largerworld.maxCellCreationsPerTick` configure these limits.
 
 Full packet mapping, neighbor shadow tracking, and inbound interaction routing are documented in [docs/MULTIPLAYER_ARCHITECTURE.md](docs/MULTIPLAYER_ARCHITECTURE.md).
 

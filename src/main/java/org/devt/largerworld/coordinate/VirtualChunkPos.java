@@ -1,5 +1,7 @@
 package org.devt.largerworld.coordinate;
 
+import java.math.BigInteger;
+
 /**
  * Chunk identity used by the multiplayer/network layer. Local chunk coordinates
  * are canonical inside one cell; client coordinates are relative to a player's
@@ -29,17 +31,35 @@ public record VirtualChunkPos(CellPos cell, int localX, int localZ) {
     }
 
     public int clientX(CellPos playerCell) {
-        return toClientCoordinate(cell.x(), playerCell.x(), localX);
+        return toClientCoordinate(cell, playerCell, localX, true);
     }
 
     public int clientZ(CellPos playerCell) {
-        return toClientCoordinate(cell.z(), playerCell.z(), localZ);
+        return toClientCoordinate(cell, playerCell, localZ, false);
     }
 
     /** Maps packet/control coordinates too; {@code local} may transiently cross a seam. */
     public static int toClientCoordinate(long sourceCell, long originCell, int local) {
-        long cellDelta = Math.subtractExact(sourceCell, originCell);
-        long result = Math.addExact(Math.multiplyExact(cellDelta, CELL_CHUNKS), local);
-        return Math.toIntExact(result);
+        return toClientCoordinate(
+                BigInteger.valueOf(sourceCell), BigInteger.valueOf(originCell), local);
+    }
+
+    /** Arbitrary-precision form used by packet translations at distant cells. */
+    public static int toClientCoordinate(
+            BigInteger sourceCell, BigInteger originCell, int local) {
+        return sourceCell.subtract(originCell)
+                .multiply(BigInteger.valueOf(CELL_CHUNKS))
+                .add(BigInteger.valueOf(local))
+                .intValueExact();
+    }
+
+    private static int toClientCoordinate(
+            CellPos sourceCell, CellPos originCell, int local, boolean xAxis) {
+        BigInteger delta = xAxis
+                ? sourceCell.deltaX(originCell)
+                : sourceCell.deltaZ(originCell);
+        return delta.multiply(BigInteger.valueOf(CELL_CHUNKS))
+                .add(BigInteger.valueOf(local))
+                .intValueExact();
     }
 }

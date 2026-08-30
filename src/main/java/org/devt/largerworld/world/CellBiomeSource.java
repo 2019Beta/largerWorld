@@ -10,6 +10,7 @@ import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.mixin.BiomeSourceAccessor;
 
 import java.util.stream.Stream;
+import java.math.BigInteger;
 
 /** Samples the canonical biome source at this cell's global quart coordinates. */
 public final class CellBiomeSource extends BiomeSource {
@@ -47,9 +48,11 @@ public final class CellBiomeSource extends BiomeSource {
                 noise);
     }
 
-    private static int offset(int local, long cellCoordinate) {
+    private static int offset(int local, BigInteger cellCoordinate) {
         // BiomeSource is int-based just like noise generation. Use the same
         // deterministic low-32-bit folding instead of failing at distant cells.
-        return (int) (local + cellCoordinate * CELL_SIZE_BIOMES);
+        return cellCoordinate.multiply(BigInteger.valueOf(CELL_SIZE_BIOMES))
+                .add(BigInteger.valueOf(local))
+                .intValue();
     }
 }

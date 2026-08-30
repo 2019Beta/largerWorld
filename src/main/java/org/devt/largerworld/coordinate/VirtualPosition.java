@@ -46,21 +46,21 @@ public record VirtualPosition(CellPos cell, double localX, double y, double loca
             throw new IllegalArgumentException("Global coordinates and Y must be finite");
         }
 
-        long cellX = globalCell(globalX);
-        long cellZ = globalCell(globalZ);
-        double localX = globalX.subtract(CELL_SIZE_DECIMAL.multiply(BigDecimal.valueOf(cellX))).doubleValue();
-        double localZ = globalZ.subtract(CELL_SIZE_DECIMAL.multiply(BigDecimal.valueOf(cellZ))).doubleValue();
+        BigInteger cellX = globalCell(globalX);
+        BigInteger cellZ = globalCell(globalZ);
+        double localX = globalX.subtract(CELL_SIZE_DECIMAL.multiply(new BigDecimal(cellX))).doubleValue();
+        double localZ = globalZ.subtract(CELL_SIZE_DECIMAL.multiply(new BigDecimal(cellZ))).doubleValue();
         return normalize(new CellPos(cellX, cellZ), localX, y, localZ);
     }
 
     /** Converts a connection-space X coordinate into the local X of a source cell. */
     public static double clientToLocalX(CellPos sourceCell, CellPos originCell, double clientX) {
-        return clientX - ((double) sourceCell.x() - (double) originCell.x()) * CELL_SIZE;
+        return clientX - sourceCell.deltaXExact(originCell) * (double) CELL_SIZE;
     }
 
     /** Converts a connection-space Z coordinate into the local Z of a source cell. */
     public static double clientToLocalZ(CellPos sourceCell, CellPos originCell, double clientZ) {
-        return clientZ - ((double) sourceCell.z() - (double) originCell.z()) * CELL_SIZE;
+        return clientZ - sourceCell.deltaZExact(originCell) * (double) CELL_SIZE;
     }
 
     public BigDecimal globalX() {
@@ -83,15 +83,14 @@ public record VirtualPosition(CellPos cell, double localX, double y, double loca
         return cell.equals(expected);
     }
 
-    private static long globalCell(BigDecimal global) {
-        BigInteger value = global.add(HALF_CELL_DECIMAL)
+    private static BigInteger globalCell(BigDecimal global) {
+        return global.add(HALF_CELL_DECIMAL)
                 .divide(CELL_SIZE_DECIMAL, 0, RoundingMode.FLOOR)
                 .toBigIntegerExact();
-        return value.longValueExact();
     }
 
-    private static BigDecimal global(long cell, double local) {
-        return CELL_SIZE_DECIMAL.multiply(BigDecimal.valueOf(cell)).add(BigDecimal.valueOf(local));
+    private static BigDecimal global(BigInteger cell, double local) {
+        return CELL_SIZE_DECIMAL.multiply(new BigDecimal(cell)).add(BigDecimal.valueOf(local));
     }
 
     private static String format(BigDecimal value, int decimals) {

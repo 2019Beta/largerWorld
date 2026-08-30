@@ -9,51 +9,94 @@ import net.minecraft.world.gen.chunk.AquiferSampler;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 
-import java.util.IdentityHashMap;
+import java.math.BigInteger;
+import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Coordinate offsets associated with each cell world's private noise config.
  *
  * <p>Vanilla world-generation APIs expose horizontal coordinates as {@code int}.
- * The virtual world is much larger, so sampling coordinates intentionally use
- * two's-complement modulo 2^32. This keeps neighboring samples consecutive and
- * deterministic instead of rejecting cells whose global block position exceeds
- * {@link Integer#MAX_VALUE}.
+ * Calls that must remain spatially continuous use a two's-complement folded
+ * coordinate, while random-only calls hash the complete {@link BigInteger}
+ * coordinate with a domain separator. The independent density overlay is
+ * evaluated directly in the arbitrary-precision coordinate plane, so the
+ * generated terrain has no fixed 32-bit coordinate period.
  */
 public final class WorldgenCoordinates {
     public static final int CELL_SIZE_CHUNKS = (int) (VirtualPosition.CELL_SIZE / 16L);
 
-    private static final Map<NoiseConfig, CellPos> NOISE_CONFIG_CELLS = new IdentityHashMap<>();
-    private static final Map<ChunkNoiseSampler, CellPos> SAMPLER_CELLS = new WeakHashMap<>();
-    private static final Map<AquiferSampler, CellPos> AQUIFER_CELLS = new WeakHashMap<>();
+    private static final Map<NoiseConfig, Context> NOISE_CONFIG_CONTEXTS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<ChunkNoiseSampler, Context> SAMPLER_CONTEXTS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<AquiferSampler, Context> AQUIFER_CONTEXTS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<ChunkNoiseSampler, Map<Long, Double>> DENSITY_CACHES =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private WorldgenCoordinates() {
     }
 
-    public static synchronized void register(NoiseConfig noiseConfig, CellPos cell) {
-        NOISE_CONFIG_CELLS.put(noiseConfig, cell);
+    public static void register(NoiseConfig noiseConfig, CellPos cell, long seed) {
+        NOISE_CONFIG_CONTEXTS.put(noiseConfig, new Context(cell, seed));
     }
 
-    public static synchronized CellPos cell(NoiseConfig noiseConfig) {
-        return NOISE_CONFIG_CELLS.getOrDefault(noiseConfig, CellPos.ZERO);
+    public static void unregister(NoiseConfig noiseConfig) {
+        NOISE_CONFIG_CONTEXTS.remove(noiseConfig);
     }
 
-    public static synchronized void register(ChunkNoiseSampler sampler, CellPos cell) {
-        SAMPLER_CELLS.put(sampler, cell);
+    public static void clearServerState() {
+        NOISE_CONFIG_CONTEXTS.clear();
+        SAMPLER_CONTEXTS.clear();
+        AQUIFER_CONTEXTS.clear();
+        DENSITY_CACHES.clear();
     }
 
-    public static synchronized CellPos cell(ChunkNoiseSampler sampler) {
-        return SAMPLER_CELLS.getOrDefault(sampler, CellPos.ZERO);
+    public static CellPos cell(NoiseConfig noiseConfig) {
+        return context(noiseConfig).cell();
     }
 
-    public static synchronized void register(AquiferSampler sampler, CellPos cell) {
-        AQUIFER_CELLS.put(sampler, cell);
+    public static long seed(NoiseConfig noiseConfig) {
+        return context(noiseConfig).seed();
     }
 
-    public static synchronized CellPos cell(AquiferSampler sampler) {
-        return AQUIFER_CELLS.getOrDefault(sampler, CellPos.ZERO);
+    public static void register(ChunkNoiseSampler sampler, NoiseConfig noiseConfig) {
+        SAMPLER_CONTEXTS.put(sampler, context(noiseConfig));
+        DENSITY_CACHES.put(sampler, new ConcurrentHashMap<>());
+    }
+
+    public static CellPos cell(ChunkNoiseSampler sampler) {
+        return context(sampler).cell();
+    }
+
+    public static long seed(ChunkNoiseSampler sampler) {
+        return context(sampler).seed();
+    }
+
+    public static double densityOffset(ChunkNoiseSampler sampler, int foldedX, int foldedZ) {
+        Context context = context(sampler);
+        int localX = toLocalBlockX(context.cell(), foldedX);
+        int localZ = toLocalBlockZ(context.cell(), foldedZ);
+        long key = ((long) localX << 32) ^ (localZ & 0xffffffffL);
+        Map<Long, Double> cache = DENSITY_CACHES.get(sampler);
+        if (cache == null) {
+            return ArbitraryPrecisionWorldgen.densityOffset(
+                    context.cell(), localX, localZ, context.seed());
+        }
+        return cache.computeIfAbsent(key, ignored ->
+                ArbitraryPrecisionWorldgen.densityOffset(
+                        context.cell(), localX, localZ, context.seed()));
+    }
+
+    public static void register(AquiferSampler sampler, NoiseConfig noiseConfig) {
+        AQUIFER_CONTEXTS.put(sampler, context(noiseConfig));
+    }
+
+    public static CellPos cell(AquiferSampler sampler) {
+        return context(sampler).cell();
     }
 
     public static CellPos cell(ChunkGenerator generator) {
@@ -85,6 +128,14 @@ public final class WorldgenCoordinates {
         return addWrapped(localBlockZ, cell.z(), VirtualPosition.CELL_SIZE);
     }
 
+    public static int toLocalBlockX(CellPos cell, int globalBlockX) {
+        return subtractWrapped(globalBlockX, cell.x(), VirtualPosition.CELL_SIZE);
+    }
+
+    public static int toLocalBlockZ(CellPos cell, int globalBlockZ) {
+        return subtractWrapped(globalBlockZ, cell.z(), VirtualPosition.CELL_SIZE);
+    }
+
     public static BlockPos toGlobalBlock(CellPos cell, BlockPos localPos) {
         return new BlockPos(
                 toGlobalBlockX(cell, localPos.getX()),
@@ -94,17 +145,90 @@ public final class WorldgenCoordinates {
 
     public static BlockPos toLocalBlock(CellPos cell, BlockPos globalPos) {
         return new BlockPos(
-                subtractWrapped(globalPos.getX(), cell.x(), VirtualPosition.CELL_SIZE),
+                toLocalBlockX(cell, globalPos.getX()),
                 globalPos.getY(),
-                subtractWrapped(globalPos.getZ(), cell.z(), VirtualPosition.CELL_SIZE));
+                toLocalBlockZ(cell, globalPos.getZ()));
     }
 
-    private static int addWrapped(int local, long cellCoordinate, long cellSize) {
-        return (int) (local + cellCoordinate * cellSize);
+    /** A non-periodic pair of int tokens for vanilla random APIs that only accept chunk ints. */
+    public static ChunkPos toRandomChunk(CellPos cell, ChunkPos localPos, long domain) {
+        BigInteger globalX = globalChunk(cell.x(), localPos.x);
+        BigInteger globalZ = globalChunk(cell.z(), localPos.z);
+        return new ChunkPos(
+                hashToInt(globalX, globalZ, domain),
+                hashToInt(globalX, globalZ, domain ^ 0x9e3779b97f4a7c15L));
     }
 
-    private static int subtractWrapped(int global, long cellCoordinate, long cellSize) {
-        return (int) (global - cellCoordinate * cellSize);
+    public static BlockPos toRandomBlock(CellPos cell, int localX, int y, int localZ, long domain) {
+        BigInteger globalX = globalBlock(cell.x(), localX);
+        BigInteger globalZ = globalBlock(cell.z(), localZ);
+        return new BlockPos(
+                hashToInt(globalX, globalZ, domain),
+                y,
+                hashToInt(globalX, globalZ, domain ^ 0x9e3779b97f4a7c15L));
     }
 
+    public static BigInteger globalBlockX(CellPos cell, int localX) {
+        return globalBlock(cell.x(), localX);
+    }
+
+    public static BigInteger globalBlockZ(CellPos cell, int localZ) {
+        return globalBlock(cell.z(), localZ);
+    }
+
+    private static Context context(NoiseConfig config) {
+        return NOISE_CONFIG_CONTEXTS.getOrDefault(config, Context.ZERO);
+    }
+
+    private static Context context(ChunkNoiseSampler sampler) {
+        return SAMPLER_CONTEXTS.getOrDefault(sampler, Context.ZERO);
+    }
+
+    private static Context context(AquiferSampler sampler) {
+        return AQUIFER_CONTEXTS.getOrDefault(sampler, Context.ZERO);
+    }
+
+    private static BigInteger globalBlock(BigInteger cellCoordinate, int local) {
+        return cellCoordinate.shiftLeft(20).add(BigInteger.valueOf(local));
+    }
+
+    private static BigInteger globalChunk(BigInteger cellCoordinate, int local) {
+        return cellCoordinate.shiftLeft(16).add(BigInteger.valueOf(local));
+    }
+
+    private static int addWrapped(int local, BigInteger cellCoordinate, long cellSize) {
+        return cellCoordinate.multiply(BigInteger.valueOf(cellSize))
+                .add(BigInteger.valueOf(local))
+                .intValue();
+    }
+
+    private static int subtractWrapped(int global, BigInteger cellCoordinate, long cellSize) {
+        return BigInteger.valueOf(global)
+                .subtract(cellCoordinate.multiply(BigInteger.valueOf(cellSize)))
+                .intValue();
+    }
+
+    private static int hashToInt(BigInteger x, BigInteger z, long domain) {
+        long hash = mixBytes(0x6a09e667f3bcc909L ^ domain, x.toByteArray());
+        hash = mixBytes(hash ^ 0xbb67ae8584caa73bL, z.toByteArray());
+        hash ^= hash >>> 30;
+        hash *= 0xbf58476d1ce4e5b9L;
+        hash ^= hash >>> 27;
+        hash *= 0x94d049bb133111ebL;
+        return (int) (hash ^ hash >>> 31);
+    }
+
+    private static long mixBytes(long state, byte[] bytes) {
+        long value = state ^ bytes.length;
+        for (byte current : bytes) {
+            value ^= current & 0xffL;
+            value *= 0x100000001b3L;
+            value ^= value >>> 29;
+        }
+        return value;
+    }
+
+    private record Context(CellPos cell, long seed) {
+        private static final Context ZERO = new Context(CellPos.ZERO, 0L);
+    }
 }

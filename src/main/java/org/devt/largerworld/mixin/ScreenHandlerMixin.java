@@ -52,8 +52,8 @@ public abstract class ScreenHandlerMixin {
         CellPos targetCell = CellWorldKey.cell(targetWorld.getRegistryKey());
         CellPos playerCell = CellWorldKey.cell(playerWorld.getRegistryKey());
         try {
-            long deltaX = Math.subtractExact(targetCell.x(), playerCell.x());
-            long deltaZ = Math.subtractExact(targetCell.z(), playerCell.z());
+            long deltaX = targetCell.deltaXExact(playerCell);
+            long deltaZ = targetCell.deltaZExact(playerCell);
             long projectedX = Math.addExact(
                     target.pos().getX(), Math.multiplyExact(deltaX, VirtualPosition.CELL_SIZE));
             long projectedZ = Math.addExact(

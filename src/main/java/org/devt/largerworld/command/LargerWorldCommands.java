@@ -75,7 +75,8 @@ public final class LargerWorldCommands {
                     "Teleported to global " + target.globalX(3) + " / "
                             + String.format(Locale.ROOT, "%.3f", target.y()) + " / " + target.globalZ(3)), true);
             return 1;
-        } catch (ArithmeticException | IllegalArgumentException exception) {
+        } catch (ArithmeticException | IllegalArgumentException
+                 | CellWorldManager.CellCapacityException exception) {
             context.getSource().sendError(Text.literal("Invalid or unsupported global coordinate: "
                     + exception.getMessage()));
             return 0;

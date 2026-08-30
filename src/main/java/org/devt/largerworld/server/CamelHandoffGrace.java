@@ -14,6 +14,10 @@ public final class CamelHandoffGrace {
     private CamelHandoffGrace() {
     }
 
+    public static void clearServerState() {
+        POSE_GRACE_UNTIL.clear();
+    }
+
     public static void mark(CamelEntity camel) {
         POSE_GRACE_UNTIL.put(
                 camel.getUuid(), camel.getEntityWorld().getTime() + POSE_GRACE_TICKS);

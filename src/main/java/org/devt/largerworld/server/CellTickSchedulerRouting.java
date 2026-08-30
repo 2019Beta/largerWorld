@@ -9,6 +9,7 @@ import org.devt.largerworld.world.CellBoundaryAccess;
 import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.lang.ref.WeakReference;
 
 /** Routes scheduled block/fluid ticks whose position belongs to a neighboring cell. */
 public final class CellTickSchedulerRouting {
@@ -24,15 +25,32 @@ public final class CellTickSchedulerRouting {
     }
 
     public static void register(WorldTickScheduler<?> scheduler, ServerWorld world, Kind kind) {
-        OWNERS.put(scheduler, new Owner(world, kind));
+        OWNERS.put(scheduler, new Owner(new WeakReference<>(world), kind));
+    }
+
+    public static void unregisterWorld(ServerWorld world) {
+        synchronized (OWNERS) {
+            OWNERS.entrySet().removeIf(entry -> {
+                ServerWorld owner = entry.getValue().world().get();
+                return owner == null || owner == world;
+            });
+        }
+    }
+
+    public static void clearServerState() {
+        OWNERS.clear();
     }
 
     public static boolean routeSchedule(WorldTickScheduler<?> scheduler, OrderedTick<?> tick) {
         Owner owner = OWNERS.get(scheduler);
-        if (owner == null) {
+        ServerWorld ownerWorld = owner == null ? null : owner.world().get();
+        if (ownerWorld == null) {
+            if (owner != null) {
+                OWNERS.remove(scheduler);
+            }
             return false;
         }
-        return CellBoundaryAccess.resolveLoadedBlock(owner.world(), tick.pos())
+        return CellBoundaryAccess.resolveLoadedBlock(ownerWorld, tick.pos())
                 .map(resolved -> {
                     WorldTickScheduler<?> target = scheduler(resolved.world(), owner.kind());
                     scheduleUnchecked(target, new OrderedTick<>(
@@ -49,10 +67,14 @@ public final class CellTickSchedulerRouting {
     public static Boolean routeIsQueued(
             WorldTickScheduler<?> scheduler, BlockPos pos, Object type, boolean ticking) {
         Owner owner = OWNERS.get(scheduler);
-        if (owner == null) {
+        ServerWorld ownerWorld = owner == null ? null : owner.world().get();
+        if (ownerWorld == null) {
+            if (owner != null) {
+                OWNERS.remove(scheduler);
+            }
             return null;
         }
-        return CellBoundaryAccess.resolveLoadedBlock(owner.world(), pos)
+        return CellBoundaryAccess.resolveLoadedBlock(ownerWorld, pos)
                 .map(resolved -> {
                     WorldTickScheduler<?> target = scheduler(resolved.world(), owner.kind());
                     return ticking
@@ -85,6 +107,6 @@ public final class CellTickSchedulerRouting {
         return scheduler.isTicking(pos, type);
     }
 
-    private record Owner(ServerWorld world, Kind kind) {
+    private record Owner(WeakReference<ServerWorld> world, Kind kind) {
     }
 }

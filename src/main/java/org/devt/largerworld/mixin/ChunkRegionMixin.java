@@ -16,12 +16,16 @@ import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ChunkRegion.class)
 public abstract class ChunkRegionMixin {
+    @Unique
+    private static final long LARGERWORLD_REGION_RANDOM_DOMAIN = 0x524547494f4e5f31L;
+    @Unique
     private static final Identifier LARGERWORLD_WORLDGEN_RANDOM_ID =
             Identifier.ofVanilla("worldgen_region_random");
 
@@ -41,7 +45,8 @@ public abstract class ChunkRegionMixin {
             return;
         }
 
-        ChunkPos globalPos = WorldgenCoordinates.toGlobalChunk(cell, centerPos.getPos());
+        ChunkPos globalPos = WorldgenCoordinates.toRandomChunk(
+                cell, centerPos.getPos(), LARGERWORLD_REGION_RANDOM_DOMAIN);
         random = world.getChunkManager()
                 .getNoiseConfig()
                 .getOrCreateRandomDeriver(LARGERWORLD_WORLDGEN_RANDOM_ID)

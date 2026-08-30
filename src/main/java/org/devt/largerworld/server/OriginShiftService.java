@@ -41,6 +41,11 @@ public final class OriginShiftService {
     private OriginShiftService() {
     }
 
+    public static void clearServerState() {
+        LAST_RIDING_GRAPHS.clear();
+        LAST_MEMBER_ROOTS.clear();
+    }
+
     public static void tick(MinecraftServer server) {
         if (server.getTicks() % 20 == 0) {
             preloadApproachingCells(server);
@@ -127,8 +132,13 @@ public final class OriginShiftService {
             int deltaZ,
             double unchangedAxis) {
         CellPos targetCell = currentCell.add(deltaX, deltaZ);
-        ServerWorld target = CellWorldManager.getOrCreate(
-                server, CellWorldKey.baseWorld(currentWorld.getRegistryKey()), targetCell);
+        ServerWorld target;
+        try {
+            target = CellWorldManager.getOrCreate(
+                    server, CellWorldKey.baseWorld(currentWorld.getRegistryKey()), targetCell);
+        } catch (CellWorldManager.CellCapacityException exception) {
+            return;
+        }
         double x = deltaX > 0 ? -VirtualPosition.HALF_CELL + 1
                 : deltaX < 0 ? VirtualPosition.HALF_CELL - 1 : unchangedAxis;
         double z = deltaZ > 0 ? -VirtualPosition.HALF_CELL + 1
@@ -148,8 +158,13 @@ public final class OriginShiftService {
                     player.setAttached(Largerworld.CELL_POS, worldCell);
                 }
             } else if (!attachedCell.equals(CellPos.ZERO)) {
-                ServerWorld target = CellWorldManager.getOrCreate(
-                        server, CellWorldKey.baseWorld(currentWorld.getRegistryKey()), attachedCell);
+                ServerWorld target;
+                try {
+                    target = CellWorldManager.getOrCreate(
+                            server, CellWorldKey.baseWorld(currentWorld.getRegistryKey()), attachedCell);
+                } catch (CellWorldManager.CellCapacityException exception) {
+                    continue;
+                }
                 teleportGraph(player.getRootVehicle(), target,
                         player.getRootVehicle().getX(), player.getRootVehicle().getY(), player.getRootVehicle().getZ(),
                         attachedCell);
@@ -167,10 +182,15 @@ public final class OriginShiftService {
             return false;
         }
 
-        ServerWorld targetWorld = CellWorldManager.getOrCreate(
-                currentWorld.getServer(),
-                CellWorldKey.baseWorld(currentWorld.getRegistryKey()),
-                normalized.cell());
+        ServerWorld targetWorld;
+        try {
+            targetWorld = CellWorldManager.getOrCreate(
+                    currentWorld.getServer(),
+                    CellWorldKey.baseWorld(currentWorld.getRegistryKey()),
+                    normalized.cell());
+        } catch (CellWorldManager.CellCapacityException exception) {
+            return false;
+        }
         return teleportGraph(root, targetWorld,
                 normalized.localX(), normalized.y(), normalized.localZ(), normalized.cell(), true);
     }

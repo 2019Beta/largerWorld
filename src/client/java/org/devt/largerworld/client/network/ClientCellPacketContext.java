@@ -157,24 +157,24 @@ public final class ClientCellPacketContext {
     }
 
     private static int blockX(int localX, Mapping mapping) {
-        long cellDelta = Math.subtractExact(mapping.source().x(), mapping.origin().x());
+        long cellDelta = mapping.source().deltaXExact(mapping.origin());
         return Math.toIntExact(Math.addExact((long) localX,
                 Math.multiplyExact(cellDelta, VirtualPosition.CELL_SIZE)));
     }
 
     private static int blockZ(int localZ, Mapping mapping) {
-        long cellDelta = Math.subtractExact(mapping.source().z(), mapping.origin().z());
+        long cellDelta = mapping.source().deltaZExact(mapping.origin());
         return Math.toIntExact(Math.addExact((long) localZ,
                 Math.multiplyExact(cellDelta, VirtualPosition.CELL_SIZE)));
     }
 
     private static double positionX(double localX, Mapping mapping) {
-        return localX + ((double) mapping.source().x() - (double) mapping.origin().x())
+        return localX + mapping.source().deltaXExact(mapping.origin())
                 * (double) VirtualPosition.CELL_SIZE;
     }
 
     private static double positionZ(double localZ, Mapping mapping) {
-        return localZ + ((double) mapping.source().z() - (double) mapping.origin().z())
+        return localZ + mapping.source().deltaZExact(mapping.origin())
                 * (double) VirtualPosition.CELL_SIZE;
     }
 

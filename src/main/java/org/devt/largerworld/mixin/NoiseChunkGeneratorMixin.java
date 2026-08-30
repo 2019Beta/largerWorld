@@ -7,6 +7,7 @@ import net.minecraft.world.gen.noise.NoiseConfig;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.world.WorldgenCoordinates;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArgs;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -14,6 +15,9 @@ import org.spongepowered.asm.mixin.injection.invoke.arg.Args;
 
 @Mixin(NoiseChunkGenerator.class)
 public abstract class NoiseChunkGeneratorMixin {
+    @Unique
+    private static final long LARGERWORLD_CARVER_DOMAIN = 0x4341525645525f31L;
+
     @ModifyArgs(
             method = "carve",
             at = @At(
@@ -21,8 +25,9 @@ public abstract class NoiseChunkGeneratorMixin {
                     target = "Lnet/minecraft/util/math/random/ChunkRandom;setCarverSeed(JII)V"))
     private void largerworld$seedCarversFromGlobalChunk(Args args) {
         CellPos cell = WorldgenCoordinates.cell((NoiseChunkGenerator) (Object) this);
-        ChunkPos globalPos = WorldgenCoordinates.toGlobalChunk(
-                cell, new ChunkPos((Integer) args.get(1), (Integer) args.get(2)));
+        ChunkPos globalPos = WorldgenCoordinates.toRandomChunk(
+                cell, new ChunkPos((Integer) args.get(1), (Integer) args.get(2)),
+                LARGERWORLD_CARVER_DOMAIN);
         args.set(1, globalPos.x);
         args.set(2, globalPos.z);
     }

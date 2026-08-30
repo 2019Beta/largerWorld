@@ -78,6 +78,12 @@ public final class CellViewTracker {
         }
     }
 
+    /** Drops all strong world/player references after the owning server stops. */
+    public static void clearServerState() {
+        STATES.clear();
+        SHADOW_TICKET_REFS.clear();
+    }
+
     private static void updatePlayer(MinecraftServer server, ServerPlayerEntity player) {
         PlayerState state = STATES.computeIfAbsent(player.getUuid(), ignored -> new PlayerState(player));
         state.player = player;
@@ -333,11 +339,11 @@ public final class CellViewTracker {
                 continue;
             }
             CellPos playerCell = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
-            double dx = x + ((double) sourceCell.x() - (double) playerCell.x())
+            double dx = x + sourceCell.deltaXExact(playerCell)
                     * (double) org.devt.largerworld.coordinate.VirtualPosition.CELL_SIZE
                     - player.getX();
             double dy = y - player.getY();
-            double dz = z + ((double) sourceCell.z() - (double) playerCell.z())
+            double dz = z + sourceCell.deltaZExact(playerCell)
                     * (double) org.devt.largerworld.coordinate.VirtualPosition.CELL_SIZE
                     - player.getZ();
             if (dx * dx + dy * dy + dz * dz < squaredRange) {
@@ -364,10 +370,15 @@ public final class CellViewTracker {
         private Watch ensureWatch(MinecraftServer server, VirtualChunkPos pos) {
             Watch watch = watches.get(pos);
             if (watch == null) {
-                ServerWorld world = CellWorldManager.getOrCreate(
-                        server,
-                        CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
-                        pos.cell());
+                ServerWorld world;
+                try {
+                    world = CellWorldManager.getOrCreate(
+                            server,
+                            CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
+                            pos.cell());
+                } catch (CellWorldManager.CellCapacityException exception) {
+                    return null;
+                }
                 ChunkPos local = new ChunkPos(pos.localX(), pos.localZ());
                 watch = new Watch(world, local);
                 watches.put(pos, watch);
@@ -445,7 +456,8 @@ public final class CellViewTracker {
                 if (sent >= MAX_SHADOW_CHUNKS_SENT_PER_TICK) {
                     break;
                 }
-                if (sendIfReady(watches.get(wanted))) {
+                Watch watch = watches.get(wanted);
+                if (watch != null && sendIfReady(watch)) {
                     sent++;
                 }
             }
@@ -454,10 +466,15 @@ public final class CellViewTracker {
         private void claimVanillaChunk(MinecraftServer server, VirtualChunkPos pos) {
             Watch watch = watches.get(pos);
             if (watch == null) {
-                ServerWorld world = CellWorldManager.getOrCreate(
-                        server,
-                        CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
-                        pos.cell());
+                ServerWorld world;
+                try {
+                    world = CellWorldManager.getOrCreate(
+                            server,
+                            CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
+                            pos.cell());
+                } catch (CellWorldManager.CellCapacityException exception) {
+                    return;
+                }
                 watch = new Watch(world, new ChunkPos(pos.localX(), pos.localZ()));
                 watches.put(pos, watch);
                 retainTicket(watch.world, watch.localPos);

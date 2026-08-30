@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.util.Identifier;
 import org.devt.largerworld.command.LargerWorldCommands;
 import org.devt.largerworld.coordinate.CellPos;
@@ -14,7 +15,12 @@ import org.devt.largerworld.network.EntityHandoffPayload;
 import org.devt.largerworld.server.OriginShiftService;
 import org.devt.largerworld.server.CellViewTracker;
 import org.devt.largerworld.server.CellChunkTickets;
+import org.devt.largerworld.server.CellInteractionRouting;
+import org.devt.largerworld.server.CellPacketRouting;
+import org.devt.largerworld.server.CellTickSchedulerRouting;
+import org.devt.largerworld.server.CamelHandoffGrace;
 import org.devt.largerworld.world.CellWorldManager;
+import org.devt.largerworld.world.WorldgenCoordinates;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,6 +52,16 @@ public class Largerworld implements ModInitializer {
             OriginShiftService.tick(server);
             CellViewTracker.tick(server);
             CellWorldManager.tickEviction(server);
+        });
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            CellWorldManager.clearServerState(server);
+            CellViewTracker.clearServerState();
+            OriginShiftService.clearServerState();
+            CellInteractionRouting.clearServerState();
+            CellPacketRouting.clearServerState();
+            CellTickSchedulerRouting.clearServerState();
+            CamelHandoffGrace.clearServerState();
+            WorldgenCoordinates.clearServerState();
         });
     }
 }

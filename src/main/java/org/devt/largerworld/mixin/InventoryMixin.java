@@ -36,8 +36,8 @@ public interface InventoryMixin {
         long deltaX;
         long deltaZ;
         try {
-            deltaX = Math.subtractExact(containerCell.x(), playerCell.x());
-            deltaZ = Math.subtractExact(containerCell.z(), playerCell.z());
+            deltaX = containerCell.deltaXExact(playerCell);
+            deltaZ = containerCell.deltaZExact(playerCell);
         } catch (ArithmeticException exception) {
             cir.setReturnValue(false);
             return;

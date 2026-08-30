@@ -208,6 +208,14 @@ public final class CellInteractionRouting {
         REMOTE_SIGN_EDITORS.remove(player.getUuid());
     }
 
+    public static void clearServerState() {
+        REMOTE_MINING.clear();
+        REMOTE_SCREEN_WORLDS.clear();
+        REMOTE_SIGN_EDITORS.clear();
+        REROUTING.remove();
+        CLOSING_REMOTE_SCREEN.remove();
+    }
+
     /** Prevents eviction while a remote mining operation or screen still owns a world reference. */
     public static boolean isWorldInUse(ServerWorld world) {
         return REMOTE_MINING.values().stream().anyMatch(remote -> remote.world() == world)
@@ -285,10 +293,10 @@ public final class CellInteractionRouting {
         CellPos origin = CellPacketRouting.origin(player);
         CellPos current = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
         double playerClientX = player.getX()
-                + ((double) current.x() - (double) origin.x())
+                + current.deltaXExact(origin)
                 * (double) VirtualPosition.CELL_SIZE;
         double playerClientZ = player.getZ()
-                + ((double) current.z() - (double) origin.z())
+                + current.deltaZExact(origin)
                 * (double) VirtualPosition.CELL_SIZE;
         double dx = clientPos.getX() - playerClientX;
         double dy = clientPos.getY() - player.getY();
@@ -298,10 +306,15 @@ public final class CellInteractionRouting {
         }
         VirtualPosition virtual = VirtualPosition.normalize(
                 origin, clientPos.getX(), clientPos.getY(), clientPos.getZ());
-        ServerWorld world = CellWorldManager.getOrCreate(
-                server,
-                CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
-                virtual.cell());
+        ServerWorld world;
+        try {
+            world = CellWorldManager.getOrCreate(
+                    server,
+                    CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
+                    virtual.cell());
+        } catch (CellWorldManager.CellCapacityException exception) {
+            return null;
+        }
         return new BlockTarget(
                 virtual.cell(),
                 world,
@@ -311,10 +324,10 @@ public final class CellInteractionRouting {
     private static Vec3d translateToCell(ServerPlayerEntity player, CellPos target, Vec3d clientPos) {
         CellPos origin = CellPacketRouting.origin(player);
         return new Vec3d(
-                clientPos.x - ((double) target.x() - (double) origin.x())
+                clientPos.x - target.deltaXExact(origin)
                         * (double) VirtualPosition.CELL_SIZE,
                 clientPos.y,
-                clientPos.z - ((double) target.z() - (double) origin.z())
+                clientPos.z - target.deltaZExact(origin)
                         * (double) VirtualPosition.CELL_SIZE);
     }
 
@@ -322,11 +335,11 @@ public final class CellInteractionRouting {
         CellPos origin = CellPacketRouting.origin(player);
         CellPos source = CellWorldKey.cell(remote.world().getRegistryKey());
         return new BlockPos(
-                Math.toIntExact((long) remote.pos().getX()
-                        + (source.x() - origin.x()) * VirtualPosition.CELL_SIZE),
+                source.deltaX(origin).multiply(java.math.BigInteger.valueOf(VirtualPosition.CELL_SIZE))
+                        .add(java.math.BigInteger.valueOf(remote.pos().getX())).intValueExact(),
                 remote.pos().getY(),
-                Math.toIntExact((long) remote.pos().getZ()
-                        + (source.z() - origin.z()) * VirtualPosition.CELL_SIZE));
+                source.deltaZ(origin).multiply(java.math.BigInteger.valueOf(VirtualPosition.CELL_SIZE))
+                        .add(java.math.BigInteger.valueOf(remote.pos().getZ())).intValueExact());
     }
 
     private static boolean isBlockAction(PlayerActionC2SPacket.Action action) {
@@ -369,10 +382,10 @@ public final class CellInteractionRouting {
         CellPos originalCell = CellWorldKey.cell(originalWorld.getRegistryKey());
         CellPos targetCell = CellWorldKey.cell(targetWorld.getRegistryKey());
         Vec3d projectedPosition = new Vec3d(
-                originalPosition.x + ((double) originalCell.x() - (double) targetCell.x())
+                originalPosition.x + originalCell.deltaXExact(targetCell)
                         * (double) VirtualPosition.CELL_SIZE,
                 originalPosition.y,
-                originalPosition.z + ((double) originalCell.z() - (double) targetCell.z())
+                originalPosition.z + originalCell.deltaZExact(targetCell)
                         * (double) VirtualPosition.CELL_SIZE);
         boolean previous = REROUTING.get();
         REROUTING.set(true);

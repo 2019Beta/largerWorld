@@ -24,6 +24,12 @@ import org.spongepowered.asm.mixin.injection.invoke.arg.Args;
 @Mixin(ChunkGenerator.class)
 public abstract class ChunkGeneratorMixin {
     @Unique
+    private static final long LARGERWORLD_STRUCTURE_CHOICE_DOMAIN = 0x5354525543545f31L;
+    @Unique
+    private static final long LARGERWORLD_STRUCTURE_SEED_DOMAIN = 0x5354525543545f32L;
+    @Unique
+    private static final long LARGERWORLD_DECORATION_DOMAIN = 0x4445434f52415431L;
+    @Unique
     private static final ThreadLocal<CellPos> LARGERWORLD_LOCATE_CELL = new ThreadLocal<>();
 
     @Inject(method = "locateStructure", at = @At("HEAD"))
@@ -84,8 +90,9 @@ public abstract class ChunkGeneratorMixin {
     private void largerworld$testStructurePlacementAtGlobalChunk(Args args) {
         StructurePlacementCalculator calculator = args.get(0);
         CellPos cell = WorldgenCoordinates.cell(calculator.getNoiseConfig());
-        ChunkPos globalPos = WorldgenCoordinates.toGlobalChunk(
-                cell, new ChunkPos((Integer) args.get(1), (Integer) args.get(2)));
+        ChunkPos globalPos = WorldgenCoordinates.toRandomChunk(
+                cell, new ChunkPos((Integer) args.get(1), (Integer) args.get(2)),
+                LARGERWORLD_STRUCTURE_CHOICE_DOMAIN);
         args.set(1, globalPos.x);
         args.set(2, globalPos.z);
     }
@@ -97,8 +104,9 @@ public abstract class ChunkGeneratorMixin {
                     target = "Lnet/minecraft/util/math/random/ChunkRandom;setCarverSeed(JII)V"))
     private void largerworld$seedStructureChoiceFromGlobalChunk(Args args) {
         CellPos cell = WorldgenCoordinates.cell((ChunkGenerator) (Object) this);
-        ChunkPos globalPos = WorldgenCoordinates.toGlobalChunk(
-                cell, new ChunkPos((Integer) args.get(1), (Integer) args.get(2)));
+        ChunkPos globalPos = WorldgenCoordinates.toRandomChunk(
+                cell, new ChunkPos((Integer) args.get(1), (Integer) args.get(2)),
+                LARGERWORLD_STRUCTURE_SEED_DOMAIN);
         args.set(1, globalPos.x);
         args.set(2, globalPos.z);
     }
@@ -110,7 +118,10 @@ public abstract class ChunkGeneratorMixin {
                     target = "Lnet/minecraft/util/math/random/ChunkRandom;setPopulationSeed(JII)J"))
     private void largerworld$seedDecorationFromGlobalBlock(Args args) {
         CellPos cell = WorldgenCoordinates.cell((ChunkGenerator) (Object) this);
-        args.set(1, WorldgenCoordinates.toGlobalBlockX(cell, (Integer) args.get(1)));
-        args.set(2, WorldgenCoordinates.toGlobalBlockZ(cell, (Integer) args.get(2)));
+        BlockPos randomPos = WorldgenCoordinates.toRandomBlock(
+                cell, (Integer) args.get(1), 0, (Integer) args.get(2),
+                LARGERWORLD_DECORATION_DOMAIN);
+        args.set(1, randomPos.getX());
+        args.set(2, randomPos.getZ());
     }
 }

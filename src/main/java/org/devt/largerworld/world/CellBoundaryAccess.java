@@ -86,8 +86,8 @@ public final class CellBoundaryAccess {
         long deltaX;
         long deltaZ;
         try {
-            deltaX = Math.subtractExact(targetCell.x(), observerCell.x());
-            deltaZ = Math.subtractExact(targetCell.z(), observerCell.z());
+            deltaX = targetCell.deltaXExact(observerCell);
+            deltaZ = targetCell.deltaZExact(observerCell);
         } catch (ArithmeticException exception) {
             return Optional.empty();
         }
@@ -134,8 +134,8 @@ public final class CellBoundaryAccess {
             long dx;
             long dz;
             try {
-                dx = Math.subtractExact(candidateCell.x(), sourceCell.x());
-                dz = Math.subtractExact(candidateCell.z(), sourceCell.z());
+                dx = candidateCell.deltaXExact(sourceCell);
+                dz = candidateCell.deltaZExact(sourceCell);
             } catch (ArithmeticException exception) {
                 continue;
             }

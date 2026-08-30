@@ -40,6 +40,8 @@ public final class CellPacketRouting {
      */
     private static final double CLIENT_ORIGIN_REBASE_LIMIT =
             World.HORIZONTAL_LIMIT - (double) VirtualPosition.HALF_CELL;
+    private static final long MAX_CLIENT_CELL_DELTA =
+            (long) ((CLIENT_ORIGIN_REBASE_LIMIT - 1.0) / VirtualPosition.CELL_SIZE);
     private static final ThreadLocal<CellPos> ACTIVE_SOURCE = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> DIRECT_UNLOAD = ThreadLocal.withInitial(() -> false);
     private static final Map<ServerPlayerEntity, CellPos> ORIGINS = new WeakHashMap<>();
@@ -57,6 +59,12 @@ public final class CellPacketRouting {
         }
     }
 
+    public static synchronized void clearServerState() {
+        ORIGINS.clear();
+        ACTIVE_SOURCE.remove();
+        DIRECT_UNLOAD.remove();
+    }
+
     /**
      * Moves the per-connection network origin when the target cell can no longer
      * be represented safely by vanilla client coordinates.
@@ -67,12 +75,7 @@ public final class CellPacketRouting {
     public static synchronized boolean rebaseForDistantTeleport(
             ServerPlayerEntity player, CellPos targetCell) {
         CellPos currentOrigin = origin(player);
-        double clientCellCenterX = ((double) targetCell.x() - currentOrigin.x())
-                * VirtualPosition.CELL_SIZE;
-        double clientCellCenterZ = ((double) targetCell.z() - currentOrigin.z())
-                * VirtualPosition.CELL_SIZE;
-        if (Math.abs(clientCellCenterX) < CLIENT_ORIGIN_REBASE_LIMIT
-                && Math.abs(clientCellCenterZ) < CLIENT_ORIGIN_REBASE_LIMIT) {
+        if (targetCell.isWithin(currentOrigin, MAX_CLIENT_CELL_DELTA)) {
             return false;
         }
 
@@ -253,12 +256,7 @@ public final class CellPacketRouting {
     }
 
     private static boolean isCellInsideClientWindow(CellPos cell, CellPos clientOrigin) {
-        double clientCellCenterX = ((double) cell.x() - clientOrigin.x())
-                * VirtualPosition.CELL_SIZE;
-        double clientCellCenterZ = ((double) cell.z() - clientOrigin.z())
-                * VirtualPosition.CELL_SIZE;
-        return Math.abs(clientCellCenterX) < CLIENT_ORIGIN_REBASE_LIMIT
-                && Math.abs(clientCellCenterZ) < CLIENT_ORIGIN_REBASE_LIMIT;
+        return cell.isWithin(clientOrigin, MAX_CLIENT_CELL_DELTA);
     }
 
     public static double clientToLocalZ(ServerPlayerEntity player, double clientZ) {

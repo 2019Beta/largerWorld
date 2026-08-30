@@ -6,9 +6,12 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import org.devt.largerworld.world.CellWorldKey;
+import org.devt.largerworld.world.CellCreationLimits;
+import org.devt.largerworld.world.ArbitraryPrecisionWorldgen;
 import org.devt.largerworld.world.WorldgenCoordinates;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 
 /** Dependency-free checks run by Gradle's coordinateTest task. */
 public final class VirtualCoordinatesTest {
@@ -21,7 +24,7 @@ public final class VirtualCoordinatesTest {
         crossesNegativeBoundary();
         normalizesSeveralCellsAtOnce();
         decomposesLargeGlobalCoordinatesExactly();
-        rejectsCellOverflow();
+        crossesBeyondLongCellRange();
         roundTripsCellWorldKeys();
         mapsNeighborChunksIntoClientView();
         keepsConnectionCoordinatesStableAcrossCrossing();
@@ -29,6 +32,10 @@ public final class VirtualCoordinatesTest {
         identifiesCanonicalChunkBounds();
         mapsTransientRenderCenterWithoutCanonicalizing();
         foldsDistantWorldgenCoordinatesDeterministically();
+        keepsHugeCellDeltasExact();
+        makesWorldgenHighBitsNonPeriodic();
+        keepsArbitraryPrecisionNoiseContinuousAcrossSeams();
+        enforcesCellCreationLimits();
     }
 
     private static void remainsInsideCanonicalCell() {
@@ -69,20 +76,21 @@ public final class VirtualCoordinatesTest {
         check(p.localZ() >= -524288 && p.localZ() < 524288, "canonical large Z");
     }
 
-    private static void rejectsCellOverflow() {
-        boolean thrown = false;
-        try {
-            VirtualPosition.normalize(new CellPos(Long.MAX_VALUE, 0), 524288.0, 0, 0);
-        } catch (ArithmeticException expected) {
-            thrown = true;
-        }
-        check(thrown, "cell overflow must be rejected");
+    private static void crossesBeyondLongCellRange() {
+        BigInteger outsideLong = BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.ONE);
+        VirtualPosition position = VirtualPosition.normalize(
+                new CellPos(outsideLong, BigInteger.ZERO), 524288.0, 0, 0);
+        equal(outsideLong.add(BigInteger.ONE), position.cell().x(),
+                "cell coordinates extend beyond long");
+        equal(-524288.0, position.localX(), "huge cell local normalization");
     }
 
     private static void roundTripsCellWorldKeys() {
         RegistryKey<World> base = RegistryKey.of(
                 RegistryKeys.WORLD, Identifier.of("example", "nested/dimension"));
-        CellPos cell = new CellPos(-9223372036854775807L, 4815162342L);
+        CellPos cell = new CellPos(
+                BigInteger.ONE.shiftLeft(200).negate().add(BigInteger.valueOf(17)),
+                BigInteger.ONE.shiftLeft(160).add(BigInteger.valueOf(4815162342L)));
         RegistryKey<World> encoded = CellWorldKey.forCell(base, cell);
         CellWorldKey.Parsed parsed = CellWorldKey.parse(encoded).orElseThrow();
         check(parsed.baseWorld().equals(base), "base dimension key round trip");
@@ -110,9 +118,9 @@ public final class VirtualCoordinatesTest {
         equal(524287.75, target.localZ(), "inbound coordinate resolves local Z");
 
         double clientXAfterCrossing = target.localX()
-                + (target.cell().x() - origin.x()) * (double) VirtualPosition.CELL_SIZE;
+                + target.cell().deltaXExact(origin) * (double) VirtualPosition.CELL_SIZE;
         double clientZAfterCrossing = target.localZ()
-                + (target.cell().z() - origin.z()) * (double) VirtualPosition.CELL_SIZE;
+                + target.cell().deltaZExact(origin) * (double) VirtualPosition.CELL_SIZE;
         equal(524288.0, clientXAfterCrossing, "client X remains continuous");
         equal(-524288.25, clientZAfterCrossing, "client Z remains continuous");
     }
@@ -167,8 +175,62 @@ public final class VirtualCoordinatesTest {
                 "maximum cell worldgen remains representable");
     }
 
+    private static void keepsHugeCellDeltasExact() {
+        BigInteger huge = BigInteger.ONE.shiftLeft(180);
+        CellPos origin = new CellPos(huge, huge.negate());
+        CellPos neighbor = origin.add(1, -1);
+        equal(-524288.0,
+                VirtualPosition.clientToLocalX(neighbor, origin, 524288.0),
+                "huge positive neighbor delta");
+        equal(524288.0,
+                VirtualPosition.clientToLocalZ(neighbor, origin, -524288.0),
+                "huge negative neighbor delta");
+        equal(32768,
+                new VirtualChunkPos(neighbor, -32768, 32767).clientX(origin),
+                "huge cell chunk mapping");
+    }
+
+    private static void makesWorldgenHighBitsNonPeriodic() {
+        CellPos first = new CellPos(4096, 0);
+        CellPos oldPeriod = new CellPos(4096 + 65536L, 0);
+        ChunkPos a = WorldgenCoordinates.toRandomChunk(first, new ChunkPos(0, 0), 1234L);
+        ChunkPos b = WorldgenCoordinates.toRandomChunk(oldPeriod, new ChunkPos(0, 0), 1234L);
+        check(!a.equals(b), "full cell high bits must affect worldgen random tokens");
+
+        double densityA = ArbitraryPrecisionWorldgen.densityOffset(first, 0, 0, 987654321L);
+        double densityB = ArbitraryPrecisionWorldgen.densityOffset(oldPeriod, 0, 0, 987654321L);
+        check(Double.compare(densityA, densityB) != 0,
+                "arbitrary-precision density must not repeat at the old period");
+    }
+
+    private static void keepsArbitraryPrecisionNoiseContinuousAcrossSeams() {
+        CellPos west = new CellPos(BigInteger.ONE.shiftLeft(100), BigInteger.ZERO);
+        CellPos east = west.add(1, 0);
+        double before = ArbitraryPrecisionWorldgen.densityOffset(
+                west, (int) VirtualPosition.HALF_CELL - 1, 17, 42L);
+        double after = ArbitraryPrecisionWorldgen.densityOffset(
+                east, (int) -VirtualPosition.HALF_CELL, 17, 42L);
+        check(Math.abs(after - before) < 0.002,
+                "arbitrary-precision density must be continuous across a cell seam");
+    }
+
+    private static void enforcesCellCreationLimits() {
+        CellCreationLimits limits = new CellCreationLimits(4, 2);
+        check(limits.allows(3, 1), "limits allow a creation below both caps");
+        check(!limits.allows(4, 0), "active cell cap is enforced");
+        check(!limits.allows(0, 2), "per-tick creation cap is enforced");
+    }
+
     private static void equal(long expected, long actual, String label) {
         check(expected == actual, label + ": expected " + expected + ", got " + actual);
+    }
+
+    private static void equal(BigInteger expected, BigInteger actual, String label) {
+        check(expected.equals(actual), label + ": expected " + expected + ", got " + actual);
+    }
+
+    private static void equal(long expected, BigInteger actual, String label) {
+        equal(BigInteger.valueOf(expected), actual, label);
     }
 
     private static void equal(double expected, double actual, String label) {
