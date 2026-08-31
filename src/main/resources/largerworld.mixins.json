@@ -38,6 +38,7 @@
     "MeleeAttackGoalMixin",
     "MaterialRuleContextMixin",
     "ServerChunkLoadingManagerAccessor",
+    "ServerChunkLoadingManagerRegionIoMixin",
     "ServerCommonNetworkHandlerMixin",
     "ServerPlayNetworkHandlerMixin",
     "ServerPlayNetworkHandlerAccessor",

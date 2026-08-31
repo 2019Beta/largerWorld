@@ -1,5 +1,8 @@
 package org.devt.largerworld.server;
 
+import net.minecraft.world.chunk.ChunkStatus;
+import org.devt.largerworld.coordinate.VirtualPosition;
+
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -13,6 +16,8 @@ public final class CellChunkTaskEngineChecks {
         separatesDifferentTaskKeys();
         removesFailedTasksForRetry();
         detectsWhetherAViewCanReachASeam();
+        mapsChunkStatusNodes();
+        predictsFastApproachesBeforeTheViewTouchesTheSeam();
     }
 
     private static void coalescesEqualInFlightTasks() {
@@ -72,6 +77,55 @@ public final class CellChunkTaskEngineChecks {
                 "view touching the positive seam is scanned");
         check(!CellViewTracker.viewStaysInsideCell(-32758, 0, 10),
                 "view touching the negative seam is scanned");
+    }
+
+    private static void mapsChunkStatusNodes() {
+        check(CellChunkTaskKey.Target.from(ChunkStatus.EMPTY)
+                        == CellChunkTaskKey.Target.EMPTY,
+                "empty status has an explicit task node");
+        check(CellChunkTaskKey.Target.from(ChunkStatus.FEATURES)
+                        == CellChunkTaskKey.Target.FEATURES,
+                "features status has an explicit task node");
+        check(CellChunkTaskKey.Target.from(ChunkStatus.FULL)
+                        == CellChunkTaskKey.Target.FULL,
+                "full status has an explicit task node");
+    }
+
+    private static void predictsFastApproachesBeforeTheViewTouchesTheSeam() {
+        CellPrefetchPlanner.Prediction idle = CellPrefetchPlanner.predict(
+                0.0, 0.0, 0.0, 0.0, 10, 60);
+        check(!idle.crossesCell(), "stationary player far from a seam is ignored");
+
+        CellPrefetchPlanner.Prediction east = CellPrefetchPlanner.predict(
+                VirtualPosition.HALF_CELL - 1_000.0,
+                25.0,
+                20.0,
+                0.0,
+                10,
+                60);
+        check(east.deltaX() == 1 && east.deltaZ() == 0,
+                "velocity predicts an east crossing before view overlap");
+        check(east.entryLocalX() == -VirtualPosition.HALF_CELL + 1.0,
+                "east prediction maps to the target cell's west edge");
+
+        CellPrefetchPlanner.Prediction away = CellPrefetchPlanner.predict(
+                VirtualPosition.HALF_CELL - 1_000.0,
+                0.0,
+                -20.0,
+                0.0,
+                10,
+                60);
+        check(!away.crossesCell(), "motion away from a distant seam is ignored");
+
+        CellPrefetchPlanner.Prediction diagonal = CellPrefetchPlanner.predict(
+                VirtualPosition.HALF_CELL - 500.0,
+                -VirtualPosition.HALF_CELL + 500.0,
+                10.0,
+                -10.0,
+                10,
+                60);
+        check(diagonal.deltaX() == 1 && diagonal.deltaZ() == -1,
+                "diagonal motion prepares the diagonal target cell");
     }
 
     private static void check(boolean condition, String message) {

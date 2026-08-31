@@ -126,13 +126,29 @@ remove the entry, so a later request can retry and no completed future is kept a
 an unbounded cache. Per-server submission/coalescing/completion/failure counters
 are available from `CellChunkTaskEngine.statistics`.
 
-The engine owns no `ChunkHolder` state and currently delegates to vanilla's
-`addChunkLoadingTicket`. This boundary is intentional: a future asynchronous IO
-or C2ME-style DAG backend can replace the delegate without changing cell identity,
-view tracking, packet routing or ticket reference counting. Far from a cell seam,
-the view tracker takes a constant-time empty fast path and allocates no virtual
-chunk positions; it scans and schedules the cross-cell view only when the view
-square can actually overlap a boundary.
+Worldgen targets from `EMPTY` through `FULL` are explicit graph nodes. A status
+node depends on `ChunkStatus.getPrevious()` for the same global chunk; vanilla's
+`ChunkGenerationStep` and `GenerationDependencies` continue to supply the spatial
+neighbor DAG behind each node. Calls that touch chunk holders are marshalled back
+to the server thread, while unrelated cell/chunk futures progress concurrently.
+
+Before an accessible ticket is submitted, `CellRegionIoPrefetch` starts
+`VersionedChunkStorage.getNbt` on Minecraft's `StorageIoWorker`. A narrow optional
+mixin in the real loader consumes that same future, so prediction overlaps Region
+IO with ticket propagation without parsing or mutating a chunk off-thread. Reads
+that are never consumed expire after 15 seconds; completed NBT is not an unbounded
+cache. The hook uses `require = 0`, so a backend that replaces the vanilla load
+method can fall back to its own IO implementation instead of failing mixin startup.
+
+Every five ticks the prediction planner projects the root vehicle's velocity up
+to 60 ticks ahead. If that trajectory or the ordinary view margin can reach a
+seam, it creates the predicted target cell and requests a 5x5 entry area with
+15-second expiring tickets. Diagonal trajectories normalize the entry square
+across all participating cells. These defaults can be changed with
+`largerworld.prefetchIntervalTicks`, `largerworld.prefetchHorizonTicks`,
+`largerworld.prefetchRadiusChunks`, and `largerworld.regionPrefetchTtlSeconds`.
+Far from a seam, the view tracker still takes a constant-time empty fast path and
+allocates no virtual chunk positions.
 
 ## Seam crossing and inbound routing
 

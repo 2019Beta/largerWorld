@@ -6,12 +6,9 @@ import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.entity.passive.CamelEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
 import net.minecraft.network.packet.s2c.common.CustomPayloadS2CPacket;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.TeleportTarget;
 import org.devt.largerworld.Largerworld;
@@ -47,9 +44,7 @@ public final class OriginShiftService {
     }
 
     public static void tick(MinecraftServer server) {
-        if (server.getTicks() % 20 == 0) {
-            preloadApproachingCells(server);
-        }
+        CellPrefetchPlanner.tick(server);
 
         Set<UUID> handledRoots = new HashSet<>();
         Set<UUID> seenMembers = new HashSet<>();
@@ -100,51 +95,6 @@ public final class OriginShiftService {
         }
         LAST_RIDING_GRAPHS.keySet().retainAll(handledRoots);
         LAST_MEMBER_ROOTS.keySet().retainAll(seenMembers);
-    }
-
-    private static void preloadApproachingCells(MinecraftServer server) {
-        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            ServerWorld currentWorld = player.getEntityWorld();
-            CellPos currentCell = CellWorldKey.cell(currentWorld.getRegistryKey());
-            int margin = (player.getViewDistance() + 2) * 16;
-            int deltaX = player.getX() >= VirtualPosition.HALF_CELL - margin ? 1
-                    : player.getX() < -VirtualPosition.HALF_CELL + margin ? -1 : 0;
-            int deltaZ = player.getZ() >= VirtualPosition.HALF_CELL - margin ? 1
-                    : player.getZ() < -VirtualPosition.HALF_CELL + margin ? -1 : 0;
-
-            if (deltaX != 0) {
-                preload(server, currentWorld, currentCell, deltaX, 0, player.getZ());
-            }
-            if (deltaZ != 0) {
-                preload(server, currentWorld, currentCell, 0, deltaZ, player.getX());
-            }
-            if (deltaX != 0 && deltaZ != 0) {
-                preload(server, currentWorld, currentCell, deltaX, deltaZ, 0);
-            }
-        }
-    }
-
-    private static void preload(
-            MinecraftServer server,
-            ServerWorld currentWorld,
-            CellPos currentCell,
-            int deltaX,
-            int deltaZ,
-            double unchangedAxis) {
-        CellPos targetCell = currentCell.add(deltaX, deltaZ);
-        ServerWorld target;
-        try {
-            target = CellWorldManager.getOrCreate(
-                    server, CellWorldKey.baseWorld(currentWorld.getRegistryKey()), targetCell);
-        } catch (CellWorldManager.CellCapacityException exception) {
-            return;
-        }
-        double x = deltaX > 0 ? -VirtualPosition.HALF_CELL + 1
-                : deltaX < 0 ? VirtualPosition.HALF_CELL - 1 : unchangedAxis;
-        double z = deltaZ > 0 ? -VirtualPosition.HALF_CELL + 1
-                : deltaZ < 0 ? VirtualPosition.HALF_CELL - 1 : unchangedAxis;
-        ChunkPos entryChunk = new ChunkPos(MathHelper.floor(x) >> 4, MathHelper.floor(z) >> 4);
-        target.getChunkManager().addTicket(ChunkTicketType.PORTAL, entryChunk, 3);
     }
 
     public static void reconcilePlayerWorlds(MinecraftServer server) {

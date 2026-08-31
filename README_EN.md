@@ -19,7 +19,7 @@ The vanilla engine only ever sees local coordinates. `cellX`/`cellZ` are arbitra
 - Each cell persists its weather, initialization flag, wandering-trader timers, and world border in that cell's dimension directory; unloading or restarting no longer recopies the base world's current state.
 - All cells share the main world's seed. Generation samples global noise and biomes at `localChunk + cell × 65536`, so terrain stays continuous across cell borders.
 - Players can sit in different cells at the same time. Players, vehicles with all passengers, ordinary entities, and projectiles migrate between worlds.
-- When a player nears a boundary, the target cell's entry chunks are preloaded; crossing over switches to the target world.
+- Chunk requests are coalesced by a global dimension/cell/local-chunk/ChunkStatus key. The server projects player or vehicle velocity three seconds ahead, starts asynchronous Region NBT reads, and preloads the predicted target entry before crossing.
 - The network coordinate origin is fixed for the lifetime of a connection. Chunks, lighting, biomes, and entities from the current and neighboring cells all render in one client view; crossing a border sends no dimension respawn packet and rebuilds nothing client-side.
 - Block updates, entity movement, sounds, particles, explosions, world events, and break animations from neighboring cells map into the same client view by source cell.
 - Movement, vehicle movement, mining, block use, and entity interaction route back to the correct cell; containers opened across a boundary still check distance against the target cell.

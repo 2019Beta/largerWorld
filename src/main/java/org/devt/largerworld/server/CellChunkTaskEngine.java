@@ -1,8 +1,10 @@
 package org.devt.largerworld.server;
 
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.chunk.ChunkStatus;
 
 import java.util.Map;
 import java.util.Objects;
@@ -28,13 +30,108 @@ public final class CellChunkTaskEngine {
     }
 
     public static CompletableFuture<?> requestAccessible(ServerWorld world, ChunkPos localPos) {
+        return requestAccessible(world, localPos, CellChunkTickets.SHADOW);
+    }
+
+    /** Starts speculative Region IO and an expiring accessible-chunk request. */
+    public static CompletableFuture<?> prefetchAccessible(
+            ServerWorld world, ChunkPos localPos) {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(localPos, "localPos");
+        return startOnServerThread(world.getServer(), () -> {
+            world.getChunkManager().addTicket(CellChunkTickets.PREFETCH, localPos, 0);
+            if (world.getChunkManager().isChunkLoaded(localPos.x, localPos.z)) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return requestAccessible(world, localPos, CellChunkTickets.PREFETCH);
+        });
+    }
+
+    public static CompletableFuture<?> requestRegionData(
+            ServerWorld world, ChunkPos localPos) {
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(localPos, "localPos");
+        if (world.getServer().isOnThread()
+                && world.getChunkManager().isChunkLoaded(localPos.x, localPos.z)) {
+            return CompletableFuture.completedFuture(null);
+        }
+        CellChunkTaskKey key = CellChunkTaskKey.regionData(world, localPos);
+        TaskPool<CellChunkTaskKey> tasks = SERVER_TASKS.computeIfAbsent(
+                world.getServer(), ignored -> new TaskPool<>());
+        return tasks.request(key, () -> CellRegionIoPrefetch.prefetch(world, localPos));
+    }
+
+    /**
+     * Requests one explicit ChunkStatus node. Nodes for the same chunk are
+     * chained through {@link ChunkStatus#getPrevious()}, while different
+     * chunks/cells remain independently schedulable.
+     */
+    public static CompletableFuture<?> requestStatus(
+            ServerWorld world, ChunkPos localPos, ChunkStatus status) {
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(localPos, "localPos");
+        Objects.requireNonNull(status, "status");
+        CompletableFuture<?> ticketReady = startOnServerThread(world.getServer(), () -> {
+            world.getChunkManager().addTicket(CellChunkTickets.PREFETCH, localPos, 0);
+            return CompletableFuture.completedFuture(null);
+        });
+        return ticketReady.thenCompose(ignored -> requestStatusNode(world, localPos, status));
+    }
+
+    private static CompletableFuture<?> requestStatusNode(
+            ServerWorld world, ChunkPos localPos, ChunkStatus status) {
+        CompletableFuture<?> dependency = status == ChunkStatus.EMPTY
+                ? requestRegionData(world, localPos)
+                : requestStatusNode(world, localPos, status.getPrevious());
+        CellChunkTaskKey key = CellChunkTaskKey.status(world, localPos, status);
+        TaskPool<CellChunkTaskKey> tasks = SERVER_TASKS.computeIfAbsent(
+                world.getServer(), ignored -> new TaskPool<>());
+        return tasks.request(key, () -> dependency.thenCompose(ignored ->
+                startOnServerThread(world.getServer(), () ->
+                        world.getChunkManager().getChunkFutureSyncOnMainThread(
+                                localPos.x, localPos.z, status, true))));
+    }
+
+    private static CompletableFuture<?> requestAccessible(
+            ServerWorld world,
+            ChunkPos localPos,
+            ChunkTicketType ticketType) {
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(localPos, "localPos");
+        // Publish the asynchronous RegionFile read before the ticket causes the
+        // vanilla loader to ask for NBT. The mixin hook then consumes this exact
+        // future, so disk IO overlaps ticket propagation without a duplicate read.
+        requestRegionData(world, localPos);
         CellChunkTaskKey key = CellChunkTaskKey.accessible(world, localPos);
         TaskPool<CellChunkTaskKey> tasks = SERVER_TASKS.computeIfAbsent(
                 world.getServer(), ignored -> new TaskPool<>());
-        return tasks.request(key, () -> world.getChunkManager()
-                .addChunkLoadingTicket(CellChunkTickets.SHADOW, localPos, 0));
+        return tasks.request(key, () -> startOnServerThread(world.getServer(), () ->
+                world.getChunkManager().addChunkLoadingTicket(ticketType, localPos, 0)));
+    }
+
+    private static CompletableFuture<?> startOnServerThread(
+            MinecraftServer server,
+            Supplier<? extends CompletableFuture<?>> starter) {
+        if (server.isOnThread()) {
+            return starter.get();
+        }
+        CompletableFuture<Object> scheduled = new CompletableFuture<>();
+        server.execute(() -> {
+            try {
+                CompletableFuture<?> backend = Objects.requireNonNull(
+                        starter.get(), "starter returned null");
+                backend.whenComplete((result, error) -> {
+                    if (error == null) {
+                        scheduled.complete(result);
+                    } else {
+                        scheduled.completeExceptionally(error);
+                    }
+                });
+            } catch (Throwable error) {
+                scheduled.completeExceptionally(error);
+            }
+        });
+        return scheduled;
     }
 
     public static Statistics statistics(MinecraftServer server) {

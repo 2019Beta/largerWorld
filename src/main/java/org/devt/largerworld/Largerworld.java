@@ -16,6 +16,7 @@ import org.devt.largerworld.server.OriginShiftService;
 import org.devt.largerworld.server.CellViewTracker;
 import org.devt.largerworld.server.CellChunkTickets;
 import org.devt.largerworld.server.CellChunkTaskEngine;
+import org.devt.largerworld.server.CellRegionIoPrefetch;
 import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.server.CellTickSchedulerRouting;
@@ -57,6 +58,7 @@ public class Largerworld implements ModInitializer {
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             CellWorldManager.clearServerState(server);
             CellChunkTaskEngine.clearServerState(server);
+            CellRegionIoPrefetch.clearServerState();
             CellViewTracker.clearServerState();
             OriginShiftService.clearServerState();
             CellInteractionRouting.clearServerState();
