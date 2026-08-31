@@ -115,6 +115,25 @@ to `ChunkHolder`'s update recipients, so they receive the same single-block,
 section-delta, block-entity, and light packets as vanilla chunk watchers without
 replacing the client chunk.
 
+## Cell-aware chunk task engine
+
+Shadow chunk preparation is submitted through a backend-neutral task front end.
+Its identity is `(baseDimension, cellX, cellZ, localChunkX, localChunkZ, target)`;
+a local `ChunkPos` alone is never used as a global scheduler or cache key. While
+an accessible-chunk task is in flight, requests from multiple players share one
+future and one backing chunk-pipeline submission. Completion and failure both
+remove the entry, so a later request can retry and no completed future is kept as
+an unbounded cache. Per-server submission/coalescing/completion/failure counters
+are available from `CellChunkTaskEngine.statistics`.
+
+The engine owns no `ChunkHolder` state and currently delegates to vanilla's
+`addChunkLoadingTicket`. This boundary is intentional: a future asynchronous IO
+or C2ME-style DAG backend can replace the delegate without changing cell identity,
+view tracking, packet routing or ticket reference counting. Far from a cell seam,
+the view tracker takes a constant-time empty fast path and allocates no virtual
+chunk positions; it scans and schedules the cross-cell view only when the view
+square can actually overlap a boundary.
+
 ## Seam crossing and inbound routing
 
 When a player crosses the canonical local boundary, the server moves the player

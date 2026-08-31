@@ -100,21 +100,37 @@ public final class CellViewTracker {
 
     private static Set<VirtualChunkPos> desiredShadowChunks(
             CellPos currentCell, int centerX, int centerZ, int radius) {
+        // A cell is 65,536 chunks wide. Almost every player tick is far from a
+        // seam, so avoid the view-square scan and hundreds of temporary
+        // VirtualChunkPos instances on that overwhelmingly common path.
+        if (viewStaysInsideCell(centerX, centerZ, radius)) {
+            return Set.of();
+        }
+        int extent = radius + 1;
         Set<VirtualChunkPos> desired = new HashSet<>();
 
-        for (int dz = -radius - 1; dz <= radius + 1; dz++) {
-            for (int dx = -radius - 1; dx <= radius + 1; dx++) {
+        for (int dz = -extent; dz <= extent; dz++) {
+            for (int dx = -extent; dx <= extent; dx++) {
                 if (!ChunkFilter.isWithinDistance(
                         centerX, centerZ, radius, centerX + dx, centerZ + dz, true)) {
                     continue;
                 }
-                VirtualChunkPos virtual = VirtualChunkPos.fromClient(currentCell, centerX + dx, centerZ + dz);
-                if (!virtual.cell().equals(currentCell)) {
-                    desired.add(virtual);
+                int chunkX = centerX + dx;
+                int chunkZ = centerZ + dz;
+                if (!VirtualChunkPos.isCanonical(chunkX, chunkZ)) {
+                    desired.add(VirtualChunkPos.fromClient(currentCell, chunkX, chunkZ));
                 }
             }
         }
         return desired;
+    }
+
+    static boolean viewStaysInsideCell(int centerX, int centerZ, int radius) {
+        long extent = (long) radius + 1;
+        return (long) centerX - extent >= -VirtualChunkPos.HALF_CELL_CHUNKS
+                && (long) centerX + extent < VirtualChunkPos.HALF_CELL_CHUNKS
+                && (long) centerZ - extent >= -VirtualChunkPos.HALF_CELL_CHUNKS
+                && (long) centerZ + extent < VirtualChunkPos.HALF_CELL_CHUNKS;
     }
 
     /**
@@ -388,8 +404,7 @@ public final class CellViewTracker {
                 // until a later world tick. This API immediately schedules the
                 // accessible-chunk future. The separately retained ticket is
                 // released explicitly when this watch leaves the player's view.
-                watch.loadingFuture = world.getChunkManager()
-                        .addChunkLoadingTicket(CellChunkTickets.SHADOW, local, 0);
+                watch.loadingFuture = CellChunkTaskEngine.requestAccessible(world, local);
             }
             return watch;
         }

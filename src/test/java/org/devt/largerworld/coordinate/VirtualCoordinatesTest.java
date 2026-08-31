@@ -10,6 +10,8 @@ import org.devt.largerworld.world.CellCreationLimits;
 import org.devt.largerworld.world.ArbitraryPrecisionWorldgen;
 import org.devt.largerworld.world.WorldgenCoordinates;
 import org.devt.largerworld.world.CellWorldStateChecks;
+import org.devt.largerworld.server.CellChunkTaskKey;
+import org.devt.largerworld.server.CellChunkTaskEngineChecks;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -37,6 +39,8 @@ public final class VirtualCoordinatesTest {
         makesWorldgenHighBitsNonPeriodic();
         keepsArbitraryPrecisionNoiseContinuousAcrossSeams();
         enforcesCellCreationLimits();
+        distinguishesGlobalChunkTaskKeys();
+        CellChunkTaskEngineChecks.run();
         CellWorldStateChecks.run();
     }
 
@@ -221,6 +225,24 @@ public final class VirtualCoordinatesTest {
         check(limits.allows(3, 1), "limits allow a creation below both caps");
         check(!limits.allows(4, 0), "active cell cap is enforced");
         check(!limits.allows(0, 2), "per-tick creation cap is enforced");
+    }
+
+    private static void distinguishesGlobalChunkTaskKeys() {
+        RegistryKey<World> dimension = RegistryKey.of(
+                RegistryKeys.WORLD, Identifier.of("example", "dimension"));
+        CellChunkTaskKey first = new CellChunkTaskKey(
+                dimension, new CellPos(3, 4), 10, -20,
+                CellChunkTaskKey.Target.ACCESSIBLE);
+        CellChunkTaskKey same = new CellChunkTaskKey(
+                dimension, new CellPos(3, 4), 10, -20,
+                CellChunkTaskKey.Target.ACCESSIBLE);
+        CellChunkTaskKey otherCell = new CellChunkTaskKey(
+                dimension, new CellPos(4, 4), 10, -20,
+                CellChunkTaskKey.Target.ACCESSIBLE);
+
+        check(first.equals(same), "equal global chunk tasks share an identity");
+        check(!first.equals(otherCell),
+                "equal local chunks in different cells have distinct task identities");
     }
 
     private static void equal(long expected, long actual, String label) {
