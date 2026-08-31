@@ -16,6 +16,7 @@ The vanilla engine only ever sees local coordinates. `cellX`/`cellZ` are arbitra
 ## What works now
 
 - Each nonzero cell gets its own `ServerWorld` on demand, with separate `region`/`entities`/`poi` storage and its own chunk cache.
+- Each cell persists its weather, initialization flag, wandering-trader timers, and world border in that cell's dimension directory; unloading or restarting no longer recopies the base world's current state.
 - All cells share the main world's seed. Generation samples global noise and biomes at `localChunk + cell × 65536`, so terrain stays continuous across cell borders.
 - Players can sit in different cells at the same time. Players, vehicles with all passengers, ordinary entities, and projectiles migrate between worlds.
 - When a player nears a boundary, the target cell's entry chunks are preloaded; crossing over switches to the target world.
@@ -36,6 +37,8 @@ Block, block-entity, and lighting changes in neighboring cells reuse vanilla sin
 Generation changes only affect newly generated chunks. Vanilla base terrain still passes through 32-bit APIs, but distant generation now adds a continuous density field hashed directly from arbitrary-precision global lattice coordinates. Carver, decoration, and region randomness also includes all high bits, removing the old fixed `2^32`/`2^36` complete-world period while keeping the density overlay continuous across cell seams. Existing region files are not rewritten.
 
 By default the server keeps at most 256 dynamic cells active and creates at most 16 per tick. JVM properties `largerworld.maxActiveCells` and `largerworld.maxCellCreationsPerTick` configure these limits.
+
+The first load of a cell created by an older version, with no `largerworld_cell_properties.dat`, initializes weather and wandering-trader state once from the base world and persists it independently thereafter. Vanilla `world_border.dat` state is active and rendered again; inspect per-cell border settings after upgrading if borders were edited while the old global suppression was installed.
 
 Full packet mapping, neighbor shadow tracking, and inbound interaction routing are documented in [docs/MULTIPLAYER_ARCHITECTURE.md](docs/MULTIPLAYER_ARCHITECTURE.md).
 

@@ -9,6 +9,7 @@ import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellCreationLimits;
 import org.devt.largerworld.world.ArbitraryPrecisionWorldgen;
 import org.devt.largerworld.world.WorldgenCoordinates;
+import org.devt.largerworld.world.CellWorldStateChecks;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -36,6 +37,7 @@ public final class VirtualCoordinatesTest {
         makesWorldgenHighBitsNonPeriodic();
         keepsArbitraryPrecisionNoiseContinuousAcrossSeams();
         enforcesCellCreationLimits();
+        CellWorldStateChecks.run();
     }
 
     private static void remainsInsideCanonicalCell() {

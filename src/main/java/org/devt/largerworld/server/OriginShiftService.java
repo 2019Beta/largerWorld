@@ -342,6 +342,7 @@ public final class OriginShiftService {
             for (Entity member : targetMembers) {
                 if (member instanceof ServerPlayerEntity player) {
                     player.setAttached(Largerworld.CELL_POS, targetCell);
+                    CellWorldEnvironmentSync.sendCurrent(player, targetWorld);
                 }
             }
         });

@@ -5,6 +5,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.world.WanderingTraderManager;
 import net.minecraft.world.World;
+import net.minecraft.world.PersistentStateManager;
+import net.minecraft.world.border.WorldBorder;
 import net.minecraft.world.biome.source.BiomeAccess;
 import net.minecraft.world.dimension.DimensionOptions;
 import net.minecraft.world.gen.chunk.ChunkGenerator;
@@ -19,9 +21,11 @@ import net.minecraft.village.ZombieSiegeManager;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.mixin.MinecraftServerAccessor;
+import org.devt.largerworld.mixin.ServerWorldWeatherAccessor;
 import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellTickSchedulerRouting;
 import org.devt.largerworld.server.CellViewTracker;
+import org.devt.largerworld.server.CellWorldEnvironmentSync;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -71,7 +75,7 @@ public final class CellWorldManager {
             throw new IllegalStateException("Base dimension is not loaded: " + parsed.baseWorld().getValue());
         }
 
-        ServerWorldProperties properties = new CellWorldProperties(new UnmodifiableLevelProperties(
+        CellWorldProperties properties = new CellWorldProperties(new UnmodifiableLevelProperties(
                 server.getSaveProperties(), server.getSaveProperties().getMainWorldProperties()));
         DimensionOptions options = new DimensionOptions(
                 baseWorld.getDimensionEntry(),
@@ -94,7 +98,30 @@ public final class CellWorldManager {
 
         WorldgenCoordinates.register(
                 created.getChunkManager().getNoiseConfig(), parsed.cell(), baseWorld.getSeed());
-        created.getWorldBorder().setMaxRadius(server.getMaxWorldBorderRadius());
+        PersistentStateManager stateManager = created.getPersistentStateManager();
+        properties.attach(stateManager);
+        WorldBorder border = stateManager.get(WorldBorder.TYPE);
+        if (border == null) {
+            WorldBorder.Properties initial = properties.initialWorldBorder()
+                    .orElse(WorldBorder.Properties.DEFAULT);
+            double coordinateScale = created.getDimension().coordinateScale();
+            border = new WorldBorder(new WorldBorder.Properties(
+                    initial.centerX() / coordinateScale,
+                    initial.centerZ() / coordinateScale,
+                    initial.damagePerBlock(),
+                    initial.safeZone(),
+                    initial.warningBlocks(),
+                    initial.warningTime(),
+                    initial.size(),
+                    initial.lerpTime(),
+                    initial.lerpTarget()));
+            stateManager.set(WorldBorder.TYPE, border);
+        }
+        border.ensureInitialized(properties.getTime());
+        border.setMaxRadius(server.getMaxWorldBorderRadius());
+        properties.bindWorldBorder(border);
+        ((ServerWorldWeatherAccessor) created).largerworld$initWeatherGradients();
+        CellWorldEnvironmentSync.registerBorderListener(created);
         worlds.put(requestedKey, created);
         Largerworld.LOGGER.info("Loaded coordinate cell {} {} for base dimension {}",
                 parsed.cell().x(), parsed.cell().z(), parsed.baseWorld().getValue());

@@ -25,6 +25,18 @@ keys are reversible, allowing player NBT that references a cell world to load it
 again after a restart. Empty and unwatched cell worlds save and unload after 60
 seconds. Shadow-view tickets prevent a visible neighbor from being evicted.
 
+Weather timers, rain/thunder flags, the initialized flag, and wandering-trader
+state live in `data/largerworld_cell_properties.dat` below each cell dimension.
+They copy the base-world values only when that file is first created. Every
+setter marks the persistent state dirty, so the normal cell save-before-close
+transaction commits the latest values. World borders use vanilla's separate
+per-dimension `data/world_border.dat`; border collision, damage, packets, and
+client rendering remain enabled. Packet centers are translated from the owning
+cell into the connection coordinate frame instead of disabling borders globally.
+Dynamic borders have their own change listener, and every seamless player
+handoff sends a complete target-cell border plus rain/thunder snapshot because
+the vanilla client normally receives those only on join or respawn.
+
 Every cell uses the original save seed. No cell-specific seed derivation is
 performed. Non-zero cell worlds keep their `ChunkPos`, structures, block entities,
 RegionFiles and network identity cell-local. Only horizontal noise interpolation,

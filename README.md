@@ -16,6 +16,7 @@ local in [-524,288, 524,288)
 ## 目前已实现的功能
 
 - 每个非零 cell 按需创建独立的 `ServerWorld`，拥有各自的 `region`/`entities`/`poi` 存储和独立的区块缓存。
+- 每个 cell 的天气、初始化标记、流浪商人计时及 world border 都保存在该 cell 自己的维度目录中；卸载或重启不会重新复制主世界当时的状态。
 - 所有 cell 共享主世界的种子。生成时在 `localChunk + cell × 65536` 处采样全局噪声与生物群系，因此跨 cell 边界的地形保持连续。
 - 不同玩家可以同时位于不同的 cell。玩家、满载乘客的载具、普通实体和弹射物都可以在世界之间迁移。
 - 玩家接近边界时，目标 cell 的入口区块会被预加载；跨过边界即切换到目标世界。
@@ -36,6 +37,8 @@ local in [-524,288, 524,288)
 生成坐标偏移只影响新生成的区块。原版基础地貌仍需通过 32 位 API，但在远坐标处会叠加一个直接散列任意精度全局格点的连续密度场；雕刻、装饰和区域随机也让完整高位参与，因此不再存在固定的 `2^32`/`2^36` 完整世界周期。该密度场在 cell 接缝两侧采样同一个全局函数。升级前已生成的区域文件不会被重写；请在新世界或尚未生成的 cell 中测试边界情况。
 
 服务器默认最多同时保留 256 个动态 cell，每 tick 最多创建 16 个。可用 JVM 属性 `largerworld.maxActiveCells` 和 `largerworld.maxCellCreationsPerTick` 调整。
+
+首次加载由旧版本创建、尚无 `largerworld_cell_properties.dat` 的 cell 时，会以主世界当前天气和流浪商人状态初始化一次，之后独立持久化。原版 `world_border.dat` 现在重新生效并正常渲染；若旧存档曾在边界被全局屏蔽期间修改过边界，请在升级后检查各 cell 的边界配置。
 
 完整的包映射、相邻 cell 阴影跟踪和入站交互路由记录在 [docs/MULTIPLAYER_ARCHITECTURE.md](docs/MULTIPLAYER_ARCHITECTURE.md)。
 
