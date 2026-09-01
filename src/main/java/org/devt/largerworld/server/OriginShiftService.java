@@ -243,9 +243,17 @@ public final class OriginShiftService {
                 root.getYaw(),
                 root.getPitch(),
                 TeleportTarget.NO_OP);
+        boolean requiresVanillaRebase = sourceMembers.stream()
+                .filter(ServerPlayerEntity.class::isInstance)
+                .map(ServerPlayerEntity.class::cast)
+                .anyMatch(player -> CellPacketRouting.requiresOriginRebase(
+                        player, targetCell));
         Entity teleportedRoot = CellPacketRouting.withSourceResult(targetWorld, () ->
                 SeamlessCellTeleport.withCellHandoff(
-                        continuousMovement, () -> root.teleportTo(target)));
+                        continuousMovement,
+                        () -> requiresVanillaRebase
+                                ? root.teleportTo(target)
+                                : SeamlessCellTeleport.teleportGraphInPlace(root, target)));
         if (teleportedRoot == null) {
             if (protectSourceClientEntity) {
                 abortSourceTrackerProtection(sourceWorld, sourceMembers);
@@ -297,16 +305,16 @@ public final class OriginShiftService {
             }
         });
 
-        // Cross-world teleportation recreates ordinary entities and vehicles,
-        // preserving their complete serialized state (inventory, saddle,
-        // ownership and subtype data). UUID lookup reconnects the rebuilt graph.
+        // In-place cell moves keep these references identical. UUID indexing is
+        // retained for the distant vanilla-rebase fallback, which still rebuilds
+        // ordinary entities because the client needs a complete world reload.
         Map<UUID, Entity> rebuiltMembers = new HashMap<>();
         for (Entity member : targetMembers) {
             rebuiltMembers.put(member.getUuid(), member);
         }
 
-        // Recreated mobs lose their live attack target. Restore it after the
-        // complete graph exists so pursuit can continue across the seam.
+        // The in-place path already retains live targets. Reapply the snapshot
+        // for the distant vanilla-rebase fallback after its rebuilt graph exists.
         for (Map.Entry<UUID, UUID> entry : mobTargetIds.entrySet()) {
             Entity rebuilt = rebuiltMembers.get(entry.getKey());
             if (!(rebuilt instanceof MobEntity mob)) {
@@ -321,10 +329,8 @@ public final class OriginShiftService {
             }
         }
 
-        // Cross-world teleportation dismantles the riding graph, moves every
-        // passenger independently, recreates the root and only then reattaches
-        // the passengers. Reassert the snapshot after that complete sequence;
-        // restoring velocity only from TeleportTarget/copyFrom is too early.
+        // Reassert velocity after registration. This is redundant for the
+        // in-place path but remains necessary for the vanilla-rebase fallback.
         for (Entity member : targetMembers) {
             if (member == teleportedRoot) {
                 continue;
@@ -379,7 +385,7 @@ public final class OriginShiftService {
         }
 
         if (preserveClientIdentity) {
-            // The replacement entity and any riding graph are now final.
+            // The transferred entity graph is now final.
             // COMMIT transfers tracker authority even when shadow ownership
             // changes without a replacement spawn on the client.
             sendClientHandoff(

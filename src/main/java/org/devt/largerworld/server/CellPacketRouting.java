@@ -75,7 +75,7 @@ public final class CellPacketRouting {
     public static synchronized boolean rebaseForDistantTeleport(
             ServerPlayerEntity player, CellPos targetCell) {
         CellPos currentOrigin = origin(player);
-        if (targetCell.isWithin(currentOrigin, MAX_CLIENT_CELL_DELTA)) {
+        if (!requiresOriginRebase(currentOrigin, targetCell)) {
             return false;
         }
 
@@ -85,6 +85,16 @@ public final class CellPacketRouting {
                 player.getName().getString(),
                 currentOrigin.x(), currentOrigin.z(), targetCell.x(), targetCell.z());
         return true;
+    }
+
+    /** Returns whether a target cell needs a vanilla client-world reload. */
+    public static synchronized boolean requiresOriginRebase(
+            ServerPlayerEntity player, CellPos targetCell) {
+        return requiresOriginRebase(origin(player), targetCell);
+    }
+
+    private static boolean requiresOriginRebase(CellPos currentOrigin, CellPos targetCell) {
+        return !targetCell.isWithin(currentOrigin, MAX_CLIENT_CELL_DELTA);
     }
 
     public static Packet<?> wrap(ServerPlayNetworkHandler handler, Packet<?> packet) {
