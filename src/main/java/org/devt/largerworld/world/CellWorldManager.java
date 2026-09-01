@@ -23,6 +23,7 @@ import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.mixin.MinecraftServerAccessor;
 import org.devt.largerworld.mixin.ServerWorldWeatherAccessor;
 import org.devt.largerworld.server.CellInteractionRouting;
+import org.devt.largerworld.server.CellChunkIoQueue;
 import org.devt.largerworld.server.CellTickSchedulerRouting;
 import org.devt.largerworld.server.CellViewTracker;
 import org.devt.largerworld.server.CellWorldEnvironmentSync;
@@ -153,6 +154,8 @@ public final class CellWorldManager {
             try {
                 var noiseConfig = world.getChunkManager().getNoiseConfig();
                 world.save(null, true, false);
+                CellChunkIoQueue.barrier(
+                        world.getChunkManager().chunkLoadingManager).join();
                 world.close();
                 worlds.remove(key);
                 idle.remove(key);

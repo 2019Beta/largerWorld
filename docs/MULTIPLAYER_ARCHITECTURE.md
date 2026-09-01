@@ -158,6 +158,24 @@ that are never consumed expire after 15 seconds; completed NBT is not an unbound
 cache. The hook uses `require = 0`, so a backend that replaces the vanilla load
 method can fall back to its own IO implementation instead of failing mixin startup.
 
+The write side is coordinated by `CellChunkIoQueue`. One active and one replaceable
+pending snapshot are retained per backing manager/local chunk. Repeated saves while
+IO is active collapse into the newest pending snapshot, while every superseded
+caller waits for that newest write. `SerializedChunk.toNbt` is represented by a
+lazy future, so a pending snapshot replaced before StorageIoWorker consumes it is
+never serialized. A failed Region write retries three times by default, reusing
+the same serialized NBT, and only the final failure is returned to vanilla's
+normal save-failure handler.
+
+Entity teardown during chunk unload waits asynchronously for that chunk's write
+queue to drain. Flush saves and dynamic Cell closure also wait for the manager
+barrier and run `completeAll(true)` once more, covering writes that were coalesced
+after vanilla placed its first StorageIoWorker flush marker. Retry count and delay
+are configurable with `largerworld.chunkIo.maxWriteAttempts` and
+`largerworld.chunkIo.retryDelayMillis`. Queue, coalescing, retry, completion,
+failure and deferred-serialization counters are exposed by
+`CellChunkIoQueue.statistics()`.
+
 Every five ticks the prediction planner projects the root vehicle's velocity up
 to 60 ticks ahead. If that trajectory or the ordinary view margin can reach a
 seam, it creates the predicted target cell and requests a 5x5 entry area with
