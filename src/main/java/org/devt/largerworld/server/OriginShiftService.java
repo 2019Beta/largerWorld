@@ -251,7 +251,7 @@ public final class OriginShiftService {
         Entity teleportedRoot = CellPacketRouting.withSourceResult(targetWorld, () ->
                 SeamlessCellTeleport.withCellHandoff(
                         continuousMovement,
-                        () -> requiresVanillaRebase
+                        () -> requiresVanillaRebase || sourceWorld == targetWorld
                                 ? root.teleportTo(target)
                                 : SeamlessCellTeleport.teleportGraphInPlace(root, target)));
         if (teleportedRoot == null) {

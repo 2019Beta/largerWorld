@@ -6,6 +6,8 @@ import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.network.packet.s2c.play.PositionFlag;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.TeleportTarget;
 import org.devt.largerworld.Largerworld;
@@ -20,6 +22,8 @@ import java.util.function.Supplier;
 
 /** Performs cell-to-cell moves without replacing server entity instances. */
 public final class SeamlessCellTeleport {
+    /** FULL (33) - 2 reaches the entity-ticking simulation level (31). */
+    private static final int ENTITY_TICKING_TICKET_RADIUS = 2;
     private static final ThreadLocal<HandoffMode> HANDOFF_MODE =
             ThreadLocal.withInitial(() -> HandoffMode.NONE);
 
@@ -109,6 +113,19 @@ public final class SeamlessCellTeleport {
             return null;
         }
 
+        // Shadow views deliberately hold loading-only tickets.  An entity can
+        // therefore enter an accessible destination chunk before the player's
+        // normal simulation ticket has moved across the seam.  Activate the
+        // landing chunk before registration so projectiles, vehicles and riding
+        // graphs do not become hidden/non-ticking for the handoff tick.
+        ChunkPos landingChunk = new ChunkPos(
+                MathHelper.floor(target.position().x) >> 4,
+                MathHelper.floor(target.position().z) >> 4);
+        to.getChunkManager().addChunkLoadingTicket(
+                CellChunkTickets.ENTITY_HANDOFF,
+                landingChunk,
+                ENTITY_TICKING_TICKET_RADIUS);
+
         Vec3d rootPosition = root.getEntityPos();
         Map<Entity, TransferState> sourceStates = new IdentityHashMap<>();
         Map<Entity, TransferState> targetStates = new IdentityHashMap<>();
@@ -137,8 +154,7 @@ public final class SeamlessCellTeleport {
                 }
                 restoreRidingGraph(members, vehicles);
                 for (Entity member : members) {
-                    if (to.getEntity(member.getUuid()) != member
-                            || member.getEntityWorld() != to
+                    if (member.getEntityWorld() != to
                             || member.isRemoved()) {
                         throw new IllegalStateException(
                                 "Destination did not retain entity instance "

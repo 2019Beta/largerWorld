@@ -3,8 +3,10 @@ package org.devt.largerworld.mixin;
 import net.minecraft.entity.Entity;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.ChestBlock;
 import net.minecraft.fluid.Fluid;
 import net.minecraft.network.packet.s2c.play.BlockBreakingProgressS2CPacket;
+import net.minecraft.network.packet.s2c.play.BlockEventS2CPacket;
 import net.minecraft.network.packet.s2c.play.ParticleS2CPacket;
 import net.minecraft.particle.ParticleEffect;
 import net.minecraft.server.world.ServerWorld;
@@ -13,6 +15,7 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.world.block.WireOrientation;
 import net.minecraft.world.tick.WorldTickScheduler;
 import org.devt.largerworld.server.CellPacketRouting;
+import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellTickSchedulerRouting;
 import org.devt.largerworld.server.CellViewTracker;
 import org.devt.largerworld.world.CellBoundaryAccess;
@@ -126,6 +129,38 @@ public abstract class ServerWorldMixin {
                             resolved.pos(), block, type, data));
             ci.cancel();
         });
+    }
+
+    /**
+     * A remote chest can live in a loading-only shadow chunk. Vanilla queues its
+     * viewer-count event until that position is entity-ticking, which means the
+     * close event may never reach the client. The event is idempotent (it carries
+     * the authoritative viewer count), so deliver it immediately while the
+     * interaction is projected into the chest's owning world.
+     */
+    @Inject(method = "addSyncedBlockEvent", at = @At("RETURN"))
+    private void largerworld$sendRemoteChestEventImmediately(
+            BlockPos pos, Block block, int type, int data, CallbackInfo ci) {
+        if (!CellInteractionRouting.isRerouting()
+                || !(block instanceof ChestBlock)
+                || type != 1) {
+            return;
+        }
+
+        ServerWorld world = (ServerWorld) (Object) this;
+        if (!CellBoundaryAccess.isCanonical(pos)
+                || !world.getBlockState(pos).isOf(block)) {
+            return;
+        }
+
+        BlockEventS2CPacket packet = new BlockEventS2CPacket(pos, block, type, data);
+        CellPacketRouting.withSource(world, () ->
+                world.getServer().getPlayerManager().sendToAround(
+                        null,
+                        pos.getX(), pos.getY(), pos.getZ(),
+                        64.0,
+                        world.getRegistryKey(),
+                        packet));
     }
 
     @Inject(method = "tick", at = @At("HEAD"))

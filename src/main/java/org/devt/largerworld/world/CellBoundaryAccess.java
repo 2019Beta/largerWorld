@@ -90,10 +90,14 @@ public final class CellBoundaryAccess {
             ServerWorld world, int chunkX, int chunkZ) {
         ChunkHolder holder = world.getChunkManager().chunkLoadingManager
                 .getCurrentChunkHolder(ChunkPos.toLong(chunkX, chunkZ));
-        if (holder == null || !holder.getPostProcessingFuture().isDone()
-                || !holder.getAccessibleFuture().isDone()) {
+        if (holder == null || !holder.getAccessibleFuture().isDone()) {
             return Optional.empty();
         }
+        // FULL/accessibility already guarantees final terrain block states.
+        // Entity/block-entity post-processing can legitimately lag behind in a
+        // loading-only shadow chunk. Treating that interval as AIR removes the
+        // ground under a vehicle on the seam and lets its whole riding graph
+        // fall through otherwise complete terrain.
         OptionalChunk<WorldChunk> accessible = holder.getAccessibleFuture().getNow(null);
         return accessible == null
                 ? Optional.empty()

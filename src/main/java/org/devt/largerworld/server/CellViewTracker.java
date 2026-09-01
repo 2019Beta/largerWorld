@@ -48,6 +48,8 @@ public final class CellViewTracker {
     private static final int MAX_SHADOW_CHUNKS_SENT_PER_TICK = 16;
     /** Bounds synchronous dependency-graph construction on the server thread. */
     private static final int MAX_SHADOW_CHUNK_LOADS_STARTED_PER_TICK = 16;
+    /** Avoids retrying a completed-but-unavailable vanilla request every tick. */
+    private static final int SHADOW_CHUNK_RETRY_DELAY_TICKS = 20;
     private static final Map<UUID, PlayerState> STATES = new HashMap<>();
     /** Ticket identity no longer includes a player key, so watches share one ref-counted ticket. */
     private static final Map<ServerWorld, Long2IntOpenHashMap> SHADOW_TICKET_REFS =
@@ -455,21 +457,21 @@ public final class CellViewTracker {
                     watch.world.getChunkManager().chunkLoadingManager;
             ChunkHolder holder = loadingManager.getCurrentChunkHolder(
                     watch.localPos.toLong());
-            if (holder == null || !holder.getPostProcessingFuture().isDone()
-                    || !holder.getAccessibleFuture().isDone()) {
+            if (holder == null || !holder.getAccessibleFuture().isDone()) {
+                retryCompletedLoad(watch);
                 return false;
             }
 
-            // ChunkHolder#getPostProcessedChunk() delegates to getWorldChunk(),
-            // which reads the BLOCK_TICKING future. Shadow views deliberately
-            // hold loading-only tickets, so that method stays null until the
-            // player crosses into the cell and vanilla adds a simulation
-            // ticket. Read the accessible future instead: it is exactly the
-            // level required to serialize and render a full chunk.
+            // FULL/accessibility is the level required by ChunkDataS2CPacket.
+            // Do not also wait for the post-processing future here: loading-only
+            // shadow tickets need not advance entity/block-entity post-processing,
+            // and that extra gate can therefore leave already accessible terrain
+            // permanently absent on the client.
             OptionalChunk<WorldChunk> accessible =
                     holder.getAccessibleFuture().getNow(null);
             WorldChunk chunk = accessible == null ? null : accessible.orElse(null);
             if (chunk == null) {
+                retryCompletedLoad(watch);
                 return false;
             }
             CellPacketRouting.sendFrom(player, watch.world,
@@ -477,6 +479,24 @@ public final class CellViewTracker {
             watch.sent = true;
             watch.loadingFuture = null;
             return true;
+        }
+
+        private void retryCompletedLoad(Watch watch) {
+            if (watch.loadingFuture == null || !watch.loadingFuture.isDone()) {
+                return;
+            }
+            if (watch.retryDelayTicks > 0) {
+                watch.retryDelayTicks--;
+                return;
+            }
+            // A holder may be replaced while its request completes, and an
+            // exceptional/empty completion must not strand this Watch forever.
+            // The task engine removes completed keys, so this starts a fresh
+            // authoritative vanilla request while the retained SHADOW ticket
+            // continues to own the chunk.
+            watch.loadingFuture = CellChunkTaskEngine.requestAccessible(
+                    watch.world, watch.localPos);
+            watch.retryDelayTicks = SHADOW_CHUNK_RETRY_DELAY_TICKS;
         }
 
         private void updateWatches(
@@ -726,6 +746,7 @@ public final class CellViewTracker {
         private final ChunkPos localPos;
         /** Keeps the explicit load request reachable until the chunk is accessible. */
         private java.util.concurrent.CompletableFuture<?> loadingFuture;
+        private int retryDelayTicks = SHADOW_CHUNK_RETRY_DELAY_TICKS;
         private boolean sent;
 
         private Watch(ServerWorld world, ChunkPos localPos) {
