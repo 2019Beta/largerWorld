@@ -40,6 +40,8 @@ local in [-524,288, 524,288)
 
 预测预取默认每 5 tick 运行一次、预测未来 60 tick，并准备入口附近 2 区块半径。可通过 JVM 属性 `largerworld.prefetchIntervalTicks`、`largerworld.prefetchHorizonTicks`、`largerworld.prefetchRadiusChunks` 和 `largerworld.regionPrefetchTtlSeconds` 调整；预取 Ticket 与未消费的 Region 读取会自动过期。
 
+区块生成现在会展开跨 cell 的 `ChunkStatus` 邻区依赖，并在真正的原版生成入口统一执行优先级、背压和全局写集合协调。默认并发生成节点数等于可用处理器数，预测队列上限为 512；可通过 `largerworld.chunkTasks.maxActive` 和 `largerworld.chunkTasks.maxQueuedPrefetch` 调整。真实视距请求优先，且能把尚未开始的预测任务原地提升为交互任务。
+
 首次加载由旧版本创建、尚无 `largerworld_cell_properties.dat` 的 cell 时，会以主世界当前天气和流浪商人状态初始化一次，之后独立持久化。原版 `world_border.dat` 现在重新生效并正常渲染；若旧存档曾在边界被全局屏蔽期间修改过边界，请在升级后检查各 cell 的边界配置。
 
 完整的包映射、相邻 cell 阴影跟踪和入站交互路由记录在 [docs/MULTIPLAYER_ARCHITECTURE.md](docs/MULTIPLAYER_ARCHITECTURE.md)。

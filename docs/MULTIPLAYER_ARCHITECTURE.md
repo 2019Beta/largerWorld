@@ -127,10 +127,28 @@ an unbounded cache. Per-server submission/coalescing/completion/failure counters
 are available from `CellChunkTaskEngine.statistics`.
 
 Worldgen targets from `EMPTY` through `FULL` are explicit graph nodes. A status
-node depends on `ChunkStatus.getPrevious()` for the same global chunk; vanilla's
-`ChunkGenerationStep` and `GenerationDependencies` continue to supply the spatial
-neighbor DAG behind each node. Calls that touch chunk holders are marshalled back
-to the server thread, while unrelated cell/chunk futures progress concurrently.
+node depends on `ChunkStatus.getPrevious()` for the same global chunk. The engine
+also expands every ring in `ChunkGenerationStep.directDependencies`; ring chunks
+are normalized through `VirtualChunkPos`, so a FEATURES dependency can continue
+in another backing Cell instead of stopping at the local `ServerWorld` edge.
+Calls that touch chunk holders or create a backing Cell are marshalled back to
+the server thread, while unrelated cell/chunk futures progress concurrently.
+
+The real `ServerChunkLoadingManager.generate` entry point is admission-controlled,
+including generation started by ordinary vanilla tickets. Interactive view work
+preempts prediction work, active generation is bounded, and excess speculative
+work is rejected without rejecting interactive loads. A speculative node that is
+later required by a real view is promoted in place. Defaults are one active node
+per available processor and 512 queued speculative nodes, configurable with
+`largerworld.chunkTasks.maxActive` and
+`largerworld.chunkTasks.maxQueuedPrefetch`.
+
+Every generation step uses its vanilla `blockStateWriteRadius` to construct a
+global chunk write set. The set includes base dimension, arbitrary-precision Cell
+and canonical local chunk coordinates. Admission reserves all members atomically;
+overlapping nodes wait, while disjoint nodes continue concurrently. These are
+asynchronous leases rather than thread-owned Java locks, so ownership can safely
+span a generation future and be released on either success or failure.
 
 Before an accessible ticket is submitted, `CellRegionIoPrefetch` starts
 `VersionedChunkStorage.getNbt` on Minecraft's `StorageIoWorker`. A narrow optional
