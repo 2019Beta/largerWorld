@@ -1,6 +1,7 @@
 package org.devt.largerworld.server;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import net.minecraft.entity.Entity;
 import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.UnloadChunkS2CPacket;
@@ -45,9 +46,11 @@ public final class CellViewTracker {
      * single burst while still filling the seam in well under a second.
      */
     private static final int MAX_SHADOW_CHUNKS_SENT_PER_TICK = 16;
+    /** Bounds synchronous dependency-graph construction on the server thread. */
+    private static final int MAX_SHADOW_CHUNK_LOADS_STARTED_PER_TICK = 16;
     private static final Map<UUID, PlayerState> STATES = new HashMap<>();
     /** Ticket identity no longer includes a player key, so watches share one ref-counted ticket. */
-    private static final Map<ServerWorld, Map<Long, Integer>> SHADOW_TICKET_REFS =
+    private static final Map<ServerWorld, Long2IntOpenHashMap> SHADOW_TICKET_REFS =
             new IdentityHashMap<>();
 
     private CellViewTracker() {
@@ -91,9 +94,10 @@ public final class CellViewTracker {
         int centerX = MathHelper.floor(player.getX()) >> 4;
         int centerZ = MathHelper.floor(player.getZ()) >> 4;
         int radius = Math.max(2, player.getViewDistance());
-        Set<VirtualChunkPos> desired = desiredShadowChunks(currentCell, centerX, centerZ, radius);
+        Set<VirtualChunkPos> desired = state.desiredShadowChunks(
+                currentCell, centerX, centerZ, radius);
 
-        state.updateWatches(server, currentCell, centerX, centerZ, desired);
+        state.updateWatches(server, desired);
         state.updateEntities();
         state.tickHandoff();
     }
@@ -376,11 +380,45 @@ public final class CellViewTracker {
         private final Set<CellEntityTracker> trackedEntities = new HashSet<>();
         private final Set<VirtualChunkPos> pendingHandoffChunks = new HashSet<>();
         private final Set<VirtualChunkPos> retainedHandoffChunks = new HashSet<>();
+        /** Cached spatial window; rebuilt only when its chunk-space inputs change. */
+        private Set<VirtualChunkPos> desiredShadowChunks = Set.of();
+        private List<VirtualChunkPos> orderedShadowChunks = List.of();
+        private @Nullable CellPos desiredCell;
+        private int desiredCenterX = Integer.MIN_VALUE;
+        private int desiredCenterZ = Integer.MIN_VALUE;
+        private int desiredRadius = Integer.MIN_VALUE;
+        private boolean desiredWindowChanged;
         private @Nullable CellPos handoffSourceCell;
         private int handoffTicks;
 
         private PlayerState(ServerPlayerEntity player) {
             this.player = player;
+        }
+
+        private Set<VirtualChunkPos> desiredShadowChunks(
+                CellPos currentCell, int centerX, int centerZ, int radius) {
+            if (currentCell.equals(desiredCell)
+                    && centerX == desiredCenterX
+                    && centerZ == desiredCenterZ
+                    && radius == desiredRadius) {
+                desiredWindowChanged = false;
+                return desiredShadowChunks;
+            }
+            desiredCell = currentCell;
+            desiredCenterX = centerX;
+            desiredCenterZ = centerZ;
+            desiredRadius = radius;
+            desiredShadowChunks = CellViewTracker.desiredShadowChunks(
+                    currentCell, centerX, centerZ, radius);
+            List<VirtualChunkPos> ordered = new ArrayList<>(desiredShadowChunks);
+            ordered.sort(Comparator.comparingLong(pos -> {
+                long dx = (long) pos.clientX(currentCell) - centerX;
+                long dz = (long) pos.clientZ(currentCell) - centerZ;
+                return dx * dx + dz * dz;
+            }));
+            orderedShadowChunks = List.copyOf(ordered);
+            desiredWindowChanged = true;
+            return desiredShadowChunks;
         }
 
         private Watch ensureWatch(MinecraftServer server, VirtualChunkPos pos) {
@@ -443,31 +481,30 @@ public final class CellViewTracker {
 
         private void updateWatches(
                 MinecraftServer server,
-                CellPos currentCell,
-                int centerX,
-                int centerZ,
                 Set<VirtualChunkPos> desired) {
-            for (VirtualChunkPos old : new ArrayList<>(watches.keySet())) {
-                if (!desired.contains(old)) {
-                    remove(old);
+            if (desiredWindowChanged) {
+                for (VirtualChunkPos old : new ArrayList<>(watches.keySet())) {
+                    if (!desired.contains(old)) {
+                        remove(old);
+                    }
                 }
             }
 
-            List<VirtualChunkPos> ordered = new ArrayList<>(desired);
-            ordered.sort(Comparator.comparingLong(pos -> {
-                long dx = (long) pos.clientX(currentCell) - centerX;
-                long dz = (long) pos.clientZ(currentCell) - centerZ;
-                return dx * dx + dz * dz;
-            }));
-
-            // Request every needed chunk up front so terrain-generation
-            // dependencies can run in parallel, but deliver ready chunks near
-            // to far and with a per-tick packet budget.
-            for (VirtualChunkPos wanted : ordered) {
+            // Expanding a fresh chunk's generation dependencies is synchronous.
+            // Bound new requests as well as packet delivery so an exact-seam
+            // teleport cannot spend one giant tick constructing the whole view.
+            int started = 0;
+            for (VirtualChunkPos wanted : orderedShadowChunks) {
+                if (watches.containsKey(wanted)) {
+                    continue;
+                }
+                if (started++ >= MAX_SHADOW_CHUNK_LOADS_STARTED_PER_TICK) {
+                    break;
+                }
                 ensureWatch(server, wanted);
             }
             int sent = 0;
-            for (VirtualChunkPos wanted : ordered) {
+            for (VirtualChunkPos wanted : orderedShadowChunks) {
                 if (sent >= MAX_SHADOW_CHUNKS_SENT_PER_TICK) {
                     break;
                 }
@@ -628,6 +665,13 @@ public final class CellViewTracker {
                 releaseTicket(watch.world, watch.localPos);
             }
             watches.clear();
+            desiredShadowChunks = Set.of();
+            orderedShadowChunks = List.of();
+            desiredCell = null;
+            desiredCenterX = Integer.MIN_VALUE;
+            desiredCenterZ = Integer.MIN_VALUE;
+            desiredRadius = Integer.MIN_VALUE;
+            desiredWindowChanged = false;
             clearHandoff();
             CellInteractionRouting.forget(player);
             CellPacketRouting.forget(player);
@@ -645,10 +689,10 @@ public final class CellViewTracker {
     }
 
     private static void retainTicket(ServerWorld world, ChunkPos pos) {
-        Map<Long, Integer> refs = SHADOW_TICKET_REFS.computeIfAbsent(
-                world, ignored -> new HashMap<>());
+        Long2IntOpenHashMap refs = SHADOW_TICKET_REFS.computeIfAbsent(
+                world, ignored -> new Long2IntOpenHashMap());
         long key = pos.toLong();
-        int previous = refs.getOrDefault(key, 0);
+        int previous = refs.get(key);
         refs.put(key, previous + 1);
         if (previous == 0) {
             world.getChunkManager().addTicket(CellChunkTickets.SHADOW, pos, 0);
@@ -656,12 +700,16 @@ public final class CellViewTracker {
     }
 
     private static void releaseTicket(ServerWorld world, ChunkPos pos) {
-        Map<Long, Integer> refs = SHADOW_TICKET_REFS.get(world);
+        Long2IntOpenHashMap refs = SHADOW_TICKET_REFS.get(world);
         if (refs == null) {
             return;
         }
         long key = pos.toLong();
-        int remaining = refs.getOrDefault(key, 0) - 1;
+        int current = refs.get(key);
+        if (current <= 0) {
+            return;
+        }
+        int remaining = current - 1;
         if (remaining > 0) {
             refs.put(key, remaining);
             return;

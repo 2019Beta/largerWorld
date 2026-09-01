@@ -2,12 +2,16 @@ package org.devt.largerworld.world;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.world.ChunkHolder;
+import net.minecraft.server.world.OptionalChunk;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.BlockView;
+import net.minecraft.world.chunk.WorldChunk;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 
@@ -48,6 +52,14 @@ public final class CellBoundaryAccess {
                 target, new BlockPos((int) localX, sourcePos.getY(), (int) localZ)));
     }
 
+    /** Returns whether a block position belongs to the source cell's canonical range. */
+    public static boolean isCanonical(BlockPos pos) {
+        return pos.getX() >= -VirtualPosition.HALF_CELL
+                && pos.getX() < VirtualPosition.HALF_CELL
+                && pos.getZ() >= -VirtualPosition.HALF_CELL
+                && pos.getZ() < VirtualPosition.HALF_CELL;
+    }
+
     public static Optional<BlockView> resolveLoadedChunkView(
             ServerWorld source, int sourceChunkX, int sourceChunkZ) {
         long deltaX = Math.floorDiv((long) sourceChunkX + VirtualPosition.HALF_CELL / 16,
@@ -70,7 +82,22 @@ public final class CellBoundaryAccess {
         }
         long localX = sourceChunkX - deltaX * (VirtualPosition.CELL_SIZE / 16);
         long localZ = sourceChunkZ - deltaZ * (VirtualPosition.CELL_SIZE / 16);
-        return Optional.ofNullable(target.getChunkAsView((int) localX, (int) localZ));
+        return loadedChunk(target, (int) localX, (int) localZ)
+                .map(chunk -> (BlockView) chunk);
+    }
+
+    private static Optional<WorldChunk> loadedChunk(
+            ServerWorld world, int chunkX, int chunkZ) {
+        ChunkHolder holder = world.getChunkManager().chunkLoadingManager
+                .getCurrentChunkHolder(ChunkPos.toLong(chunkX, chunkZ));
+        if (holder == null || !holder.getPostProcessingFuture().isDone()
+                || !holder.getAccessibleFuture().isDone()) {
+            return Optional.empty();
+        }
+        OptionalChunk<WorldChunk> accessible = holder.getAccessibleFuture().getNow(null);
+        return accessible == null
+                ? Optional.empty()
+                : Optional.ofNullable(accessible.orElse(null));
     }
 
     /** Returns {@code target}'s position expressed in {@code observerWorld}'s local coordinates. */
@@ -189,6 +216,9 @@ public final class CellBoundaryAccess {
     }
 
     public record ResolvedBlock(ServerWorld world, BlockPos pos) {
+        public Optional<WorldChunk> loadedChunk() {
+            return CellBoundaryAccess.loadedChunk(world, pos.getX() >> 4, pos.getZ() >> 4);
+        }
     }
 
     public record ProjectedWorld(ServerWorld world, Box localBox) {

@@ -22,8 +22,15 @@ dimensions/largerworld/cell/.../{region,entities,poi}
 
 Cell worlds are created on the server thread when first requested. Their registry
 keys are reversible, allowing player NBT that references a cell world to load it
-again after a restart. Empty and unwatched cell worlds save and unload after 60
-seconds. Shadow-view tickets prevent a visible neighbor from being evicted.
+again after a restart. Empty and unwatched cell worlds become eligible for unload
+after 60 seconds. The lifecycle follows Moonrise's staged-unload invariants at
+Cell granularity: the owner thread first waits for vanilla holders, lighting,
+generation and tickets to become safe; it then snapshots dirty state without a
+synchronous StorageIoWorker flush; Region writes drain asynchronously; and a
+later server tick rechecks activity before closing and removing the world. A
+player, shadow watch or interaction arriving during the drain revives the same
+ServerWorld, so a second RegionFile owner is never opened. Shadow-view tickets
+prevent a visible neighbor from becoming unload-eligible.
 
 Weather timers, rain/thunder flags, the initialized flag, and wandering-trader
 state live in `data/largerworld_cell_properties.dat` below each cell dimension.
@@ -99,6 +106,11 @@ are attached to the same connection. Ownership is handed between shadow tracking
 and vanilla tracking when the player crosses a seam, without unloading the client
 chunk during that handoff.
 
+The shadow view window is cached by `(cell, centerChunk, viewDistance)` and is
+rebuilt only when one of those inputs changes. Shared shadow tickets use a
+primitive local-chunk-key reference index per backing world, so multiple viewers
+retain one vanilla ticket without boxed-key churn or duplicate ticket removal.
+
 The translated packet groups include:
 
 - full chunk, light, biome and unload packets;
@@ -126,37 +138,17 @@ remove the entry, so a later request can retry and no completed future is kept a
 an unbounded cache. Per-server submission/coalescing/completion/failure counters
 are available from `CellChunkTaskEngine.statistics`.
 
-Worldgen targets from `EMPTY` through `FULL` are explicit graph nodes. A status
-node depends on `ChunkStatus.getPrevious()` for the same global chunk. The engine
-also expands every ring in `ChunkGenerationStep.directDependencies`; ring chunks
-are normalized through `VirtualChunkPos`, so a FEATURES dependency can continue
-in another backing Cell instead of stopping at the local `ServerWorld` edge.
-Calls that touch chunk holders or create a backing Cell are marshalled back to
-the server thread, while unrelated cell/chunk futures progress concurrently.
+The front end deliberately does not create `ChunkStatus` nodes or wrap
+`ServerChunkLoadingManager.generate`. It submits an accessible ticket on the
+server thread and exposes the exact future returned by vanilla. Dependency
+expansion, generation ordering, backpressure, holder mutation, and executor
+ownership therefore stay inside `ServerChunkManager`.
 
-The real `ServerChunkLoadingManager.generate` entry point is admission-controlled,
-including generation started by ordinary vanilla tickets. Interactive view work
-preempts prediction work, active generation is bounded, and excess speculative
-work is rejected without rejecting interactive loads. A speculative node that is
-later required by a real view is promoted in place. Defaults are one active node
-per available processor and 512 queued speculative nodes, configurable with
-`largerworld.chunkTasks.maxActive` and
-`largerworld.chunkTasks.maxQueuedPrefetch`.
-
-Every generation step uses its vanilla `blockStateWriteRadius` to construct a
-global chunk write set. The set includes base dimension, arbitrary-precision Cell
-and canonical local chunk coordinates. Admission reserves all members atomically;
-overlapping nodes wait, while disjoint nodes continue concurrently. These are
-asynchronous leases rather than thread-owned Java locks, so ownership can safely
-span a generation future and be released on either success or failure.
-
-Before an accessible ticket is submitted, `CellRegionIoPrefetch` starts
-`VersionedChunkStorage.getNbt` on Minecraft's `StorageIoWorker`. A narrow optional
-mixin in the real loader consumes that same future, so prediction overlaps Region
-IO with ticket propagation without parsing or mutating a chunk off-thread. Reads
-that are never consumed expire after 15 seconds; completed NBT is not an unbounded
-cache. The hook uses `require = 0`, so a backend that replaces the vanilla load
-method can fall back to its own IO implementation instead of failing mixin startup.
+This narrow boundary is important: delaying individual vanilla generation steps
+behind a second scheduler changes the ordering expected by `ChunkLevelManager`
+and can corrupt its pending-update collections. Cell-level coalescing is safe
+because it operates outside that state machine and never starts a generation
+step itself.
 
 The write side is coordinated by `CellChunkIoQueue`. One active and one replaceable
 pending snapshot are retained per backing manager/local chunk. Repeated saves while

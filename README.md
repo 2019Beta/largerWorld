@@ -19,7 +19,7 @@ local in [-524,288, 524,288)
 - 天气、初始化标记、流浪商人计时和 world border 都保存在各自 cell 的维度目录里；卸载或重启不会再从主世界复制当时的状态。
 - 所有 cell 共享主世界的种子。生成时在 `localChunk + cell × 65536` 处采样全局噪声与生物群系，跨 cell 边界的地形因此保持连续。
 - 不同玩家可以同时待在不同的 cell。玩家、满载乘客的载具、普通实体和弹射物都可以在世界之间迁移。
-- 区块任务使用“维度 + cell + 本地区块 + ChunkStatus”全局键合并并发请求。服务器按玩家或载具的速度预测未来 3 秒的越界方向，提前异步读取 Region NBT 并预加载目标入口；跨过边界即切换到目标世界。
+- 区块请求使用“维度 + cell + 本地区块”全局键合并并发请求。服务器按玩家或载具的速度预测未来 3 秒的越界方向，通过原版 Ticket/Future 管线预加载目标入口；跨过边界即切换到目标世界。
 - 网络坐标原点在一条连接存续期间固定不变。当前 cell 与相邻 cell 的区块、光照、生物群系和实体都渲染在同一个客户端视图里；跨越边界不会发送维度重生（respawn）包，客户端什么都不用重建。
 - 相邻 cell 的方块更新、实体移动、声音、粒子、爆炸、世界事件和破坏动画，都按来源 cell 映射进同一个客户端视图。
 - 移动、载具移动、挖掘、使用方块和交互实体都会路由回正确的 cell；跨边界打开的容器仍按目标 cell 检查距离。
@@ -42,9 +42,11 @@ local in [-524,288, 524,288)
 
 预取默认每 5 tick 跑一次，预测未来 60 tick，预加载入口周围 2 区块半径。可通过 `largerworld.prefetchIntervalTicks`、`largerworld.prefetchHorizonTicks`、`largerworld.prefetchRadiusChunks` 和 `largerworld.regionPrefetchTtlSeconds` 调整；预取 Ticket 与未消费的 Region 读取会自动过期。
 
-区块生成会展开跨 cell 的 `ChunkStatus` 邻区依赖，真正的原版生成入口统一负责优先级、背压和全局写集合协调。默认并发生成节点数等于可用处理器数，预测队列上限为 512；可通过 `largerworld.chunkTasks.maxActive` 和 `largerworld.chunkTasks.maxQueuedPrefetch` 调整。真实视距请求优先，还能把尚未开始的预测任务原地提升为交互任务。
+模组不重建或包裹原版 `ChunkStatus` 生成图。Cell 层只合并相同的 accessible-chunk 请求，生成依赖、并发、票据传播与线程归属全部由原版 `ServerChunkManager` 管理。
 
 区块保存会合并同一区块尚未开始的重复写入，NBT 序列化推迟到实际消费时；被更新版本取代的快照不会产生完整 NBT。Region 写入默认最多尝试 3 次、间隔 25 毫秒，卸载区块实体和关闭 cell 会等待相应的写屏障。用 `largerworld.chunkIo.maxWriteAttempts` 与 `largerworld.chunkIo.retryDelayMillis` 调整。
+
+动态 cell 采用分阶段关闭：先等待原版 holder、ticket、光照与生成队列进入安全状态，再提交非阻塞保存并异步排空 Region 写入，最后在服务器线程复核后关闭。写入排空期间若玩家、相邻视图或交互重新使用该 cell，会复活同一个 `ServerWorld`，不会重复打开 Region 文件。
 
 首次加载由旧版本创建、尚无 `largerworld_cell_properties.dat` 的 cell 时，会用主世界当前的天气和流浪商人状态初始化一次，之后独立持久化。原版 `world_border.dat` 现在重新生效并正常渲染；如果旧存档曾在边界被全局屏蔽期间修改过边界，升级后请检查各 cell 的边界配置。
 

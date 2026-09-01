@@ -21,8 +21,14 @@ public interface CollisionViewMixin {
             ShapeContext context,
             CallbackInfoReturnable<Boolean> cir) {
         if ((Object) this instanceof ServerWorld world) {
-            CellBoundaryAccess.resolveLoadedBlock(world, pos).ifPresent(resolved ->
-                    cir.setReturnValue(resolved.world().canPlace(state, resolved.pos(), context)));
+            var resolved = CellBoundaryAccess.resolveLoadedBlock(world, pos);
+            if (resolved.isPresent()) {
+                CellBoundaryAccess.ResolvedBlock target = resolved.get();
+                cir.setReturnValue(target.loadedChunk().isPresent()
+                        && target.world().canPlace(state, target.pos(), context));
+            } else if (!CellBoundaryAccess.isCanonical(pos)) {
+                cir.setReturnValue(false);
+            }
         }
     }
 }

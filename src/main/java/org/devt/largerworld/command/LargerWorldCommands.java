@@ -11,10 +11,13 @@ import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.MathHelper;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.server.OriginShiftService;
+import org.devt.largerworld.server.CellChunkTaskEngine;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
 
@@ -65,15 +68,35 @@ public final class LargerWorldCommands {
                     context.getSource().getServer(),
                     CellWorldKey.baseWorld(currentWorld.getRegistryKey()),
                     target.cell());
-            if (!OriginShiftService.teleportGraph(
-                    player.getRootVehicle(), targetWorld,
-                    target.localX(), target.y(), target.localZ(), target.cell())) {
-                context.getSource().sendError(Text.literal("The target cell could not be loaded"));
-                return 0;
-            }
-            context.getSource().sendFeedback(() -> Text.literal(
-                    "Teleported to global " + target.globalX(3) + " / "
-                            + String.format(Locale.ROOT, "%.3f", target.y()) + " / " + target.globalZ(3)), true);
+            ChunkPos landingChunk = new ChunkPos(
+                    MathHelper.floor(target.localX()) >> 4,
+                    MathHelper.floor(target.localZ()) >> 4);
+            var server = context.getSource().getServer();
+            var source = context.getSource();
+            CellChunkTaskEngine.prepareAccessible(targetWorld, landingChunk)
+                    .whenComplete((ignored, error) -> server.execute(() -> {
+                        if (error != null) {
+                            source.sendError(Text.literal(
+                                    "The target chunk could not be prepared: "
+                                            + rootMessage(error)));
+                            return;
+                        }
+                        if (!player.networkHandler.isConnectionOpen()) {
+                            return;
+                        }
+                        if (!OriginShiftService.teleportGraph(
+                                player.getRootVehicle(), targetWorld,
+                                target.localX(), target.y(), target.localZ(), target.cell())) {
+                            source.sendError(Text.literal("The target cell could not be loaded"));
+                            return;
+                        }
+                        source.sendFeedback(() -> Text.literal(
+                                "Teleported to global " + target.globalX(3) + " / "
+                                        + String.format(Locale.ROOT, "%.3f", target.y())
+                                        + " / " + target.globalZ(3)), true);
+                    }));
+            context.getSource().sendFeedback(
+                    () -> Text.literal("Preparing the target chunk..."), false);
             return 1;
         } catch (ArithmeticException | IllegalArgumentException
                  | CellWorldManager.CellCapacityException exception) {
@@ -81,5 +104,15 @@ public final class LargerWorldCommands {
                     + exception.getMessage()));
             return 0;
         }
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable root = error;
+        while (root.getCause() != null) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        return message == null || message.isBlank()
+                ? root.getClass().getSimpleName() : message;
     }
 }

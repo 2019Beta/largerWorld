@@ -1,11 +1,7 @@
 package org.devt.largerworld.server;
 
-import net.minecraft.world.chunk.ChunkStatus;
-import net.minecraft.world.World;
-import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -16,15 +12,35 @@ public final class CellChunkTaskEngineChecks {
 
     public static void run() {
         coalescesEqualInFlightTasks();
+        coalescesReentrantRequestsBeforeStarterReturns();
         separatesDifferentTaskKeys();
         removesFailedTasksForRetry();
         detectsWhetherAViewCanReachASeam();
-        mapsChunkStatusNodes();
         predictsFastApproachesBeforeTheViewTouchesTheSeam();
-        prioritizesInteractiveTasksAndBackpressuresPrefetch();
-        serializesOverlappingGenerationWriteSets();
         coalescesChunkWritesAndDefersSerialization();
         retriesFailedChunkWrites();
+    }
+
+    private static void coalescesReentrantRequestsBeforeStarterReturns() {
+        CellChunkTaskEngine.TaskPool<String> pool = new CellChunkTaskEngine.TaskPool<>();
+        CompletableFuture<Void> pending = new CompletableFuture<>();
+        java.util.concurrent.atomic.AtomicReference<CompletableFuture<?>> reentrant =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        AtomicInteger nestedStarts = new AtomicInteger();
+
+        CompletableFuture<?> first = pool.request("recursive", () -> {
+            reentrant.set(pool.request("recursive", () -> {
+                nestedStarts.incrementAndGet();
+                return new CompletableFuture<>();
+            }));
+            return pending;
+        });
+
+        check(reentrant.get() == first,
+                "recursive dependency construction observes the installed placeholder");
+        check(nestedStarts.get() == 0,
+                "recursive dependency construction does not start the same key twice");
+        pending.complete(null);
     }
 
     private static void coalescesEqualInFlightTasks() {
@@ -86,18 +102,6 @@ public final class CellChunkTaskEngineChecks {
                 "view touching the negative seam is scanned");
     }
 
-    private static void mapsChunkStatusNodes() {
-        check(CellChunkTaskKey.Target.from(ChunkStatus.EMPTY)
-                        == CellChunkTaskKey.Target.EMPTY,
-                "empty status has an explicit task node");
-        check(CellChunkTaskKey.Target.from(ChunkStatus.FEATURES)
-                        == CellChunkTaskKey.Target.FEATURES,
-                "features status has an explicit task node");
-        check(CellChunkTaskKey.Target.from(ChunkStatus.FULL)
-                        == CellChunkTaskKey.Target.FULL,
-                "full status has an explicit task node");
-    }
-
     private static void predictsFastApproachesBeforeTheViewTouchesTheSeam() {
         CellPrefetchPlanner.Prediction idle = CellPrefetchPlanner.predict(
                 0.0, 0.0, 0.0, 0.0, 10, 60);
@@ -133,81 +137,6 @@ public final class CellChunkTaskEngineChecks {
                 60);
         check(diagonal.deltaX() == 1 && diagonal.deltaZ() == -1,
                 "diagonal motion prepares the diagonal target cell");
-    }
-
-    private static void prioritizesInteractiveTasksAndBackpressuresPrefetch() {
-        CellChunkTaskScheduler scheduler = new CellChunkTaskScheduler(1, 1);
-        CompletableFuture<Void> blocker = new CompletableFuture<>();
-        AtomicInteger order = new AtomicInteger();
-        AtomicInteger interactiveOrder = new AtomicInteger();
-        AtomicInteger prefetchOrder = new AtomicInteger();
-
-        scheduler.submit(key(0, 0, CellChunkTaskKey.Target.EMPTY),
-                CellChunkTaskScheduler.Priority.INTERACTIVE, Set.of(), () -> blocker);
-        scheduler.submit(key(1, 0, CellChunkTaskKey.Target.EMPTY),
-                CellChunkTaskScheduler.Priority.PREFETCH, Set.of(), () -> {
-                    prefetchOrder.set(order.incrementAndGet());
-                    return CompletableFuture.completedFuture(null);
-                });
-        scheduler.submit(key(2, 0, CellChunkTaskKey.Target.EMPTY),
-                CellChunkTaskScheduler.Priority.INTERACTIVE, Set.of(), () -> {
-                    interactiveOrder.set(order.incrementAndGet());
-                    return CompletableFuture.completedFuture(null);
-                });
-        CompletableFuture<?> rejected = scheduler.submit(
-                key(3, 0, CellChunkTaskKey.Target.EMPTY),
-                CellChunkTaskScheduler.Priority.PREFETCH, Set.of(),
-                () -> CompletableFuture.completedFuture(null));
-
-        check(rejected.isCompletedExceptionally(),
-                "speculative queue applies backpressure at its configured bound");
-        check(scheduler.statistics().rejectedPrefetch() == 1,
-                "rejected speculative work is counted");
-        blocker.complete(null);
-        check(interactiveOrder.get() == 1,
-                "interactive work jumps ahead of queued speculative work");
-        check(prefetchOrder.get() == 2,
-                "speculative work resumes after interactive work");
-    }
-
-    private static void serializesOverlappingGenerationWriteSets() {
-        CellChunkTaskScheduler scheduler = new CellChunkTaskScheduler(2, 8);
-        CellChunkWriteKey shared = writeKey(0, 0);
-        CompletableFuture<Void> firstBackend = new CompletableFuture<>();
-        AtomicInteger overlappingStarts = new AtomicInteger();
-        AtomicInteger independentStarts = new AtomicInteger();
-
-        scheduler.submit(key(0, 0, CellChunkTaskKey.Target.FEATURES),
-                CellChunkTaskScheduler.Priority.INTERACTIVE, Set.of(shared),
-                () -> firstBackend);
-        scheduler.submit(key(1, 0, CellChunkTaskKey.Target.FEATURES),
-                CellChunkTaskScheduler.Priority.INTERACTIVE, Set.of(shared), () -> {
-                    overlappingStarts.incrementAndGet();
-                    return CompletableFuture.completedFuture(null);
-                });
-        scheduler.submit(key(2, 0, CellChunkTaskKey.Target.FEATURES),
-                CellChunkTaskScheduler.Priority.INTERACTIVE,
-                Set.of(writeKey(2, 0)), () -> {
-                    independentStarts.incrementAndGet();
-                    return CompletableFuture.completedFuture(null);
-                });
-
-        check(overlappingStarts.get() == 0,
-                "overlapping generation write sets do not run together");
-        check(independentStarts.get() == 1,
-                "disjoint generation write sets can run concurrently");
-        firstBackend.complete(null);
-        check(overlappingStarts.get() == 1,
-                "overlapping work starts after the prior write lease completes");
-    }
-
-    private static CellChunkTaskKey key(
-            int x, int z, CellChunkTaskKey.Target target) {
-        return new CellChunkTaskKey(World.OVERWORLD, CellPos.ZERO, x, z, target);
-    }
-
-    private static CellChunkWriteKey writeKey(int x, int z) {
-        return new CellChunkWriteKey(World.OVERWORLD, CellPos.ZERO, x, z);
     }
 
     private static void coalescesChunkWritesAndDefersSerialization() {
