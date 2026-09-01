@@ -17,7 +17,7 @@ public abstract class CamelEntityMixin {
         if (!CamelHandoffGrace.shouldSuppressPoseToggle(camel)) {
             return;
         }
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cross-camel] phase=SUPPRESS_START_SITTING id={} worldTime={} lastPoseTick={}",
                 camel.getId(), camel.getEntityWorld().getTime(),
                 camel.getDataTracker().get(CamelEntity.LAST_POSE_TICK));

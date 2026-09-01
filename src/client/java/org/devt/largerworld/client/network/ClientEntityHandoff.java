@@ -50,7 +50,7 @@ public final class ClientEntityHandoff {
                         payload.targetCell(),
                         expiresAtNanos);
             });
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[cell-handoff-client] MARKER phase=BEGIN id={} uuid={} source={} target={} state={}",
                     payload.entityId(), payload.entityUuid(), payload.sourceCell(),
                     payload.targetCell(), pending.committed ? "COMMITTED" : "BEGIN");
@@ -65,7 +65,7 @@ public final class ClientEntityHandoff {
             }
             pending.committed = true;
         }
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cell-handoff-client] MARKER phase=COMMIT id={} uuid={} source={} target={} accepted={}",
                 payload.entityId(), payload.entityUuid(), payload.sourceCell(),
                 payload.targetCell(), accepted);
@@ -228,7 +228,7 @@ public final class ClientEntityHandoff {
                 // visibly reset the view depending on render timing.
                 pending.deferredPassengers = null;
                 pending.targetTrackerSeen = true;
-                Largerworld.LOGGER.info(
+                Largerworld.logEntityInfo(
                         "[cell-handoff-client] PASSENGERS vehicle={} uuid={} "
                                 + "state=COMMITTED decision=DROP_UNCHANGED_REPLAY",
                         vehicle.getId(), vehicle.getUuid());
@@ -237,7 +237,7 @@ public final class ClientEntityHandoff {
 
             pending.deferredPassengers = null;
             pending.replayingPassengers = true;
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[cell-handoff-client] PASSENGERS vehicle={} uuid={} "
                             + "state=COMMITTED decision=REPLAY",
                     vehicle.getId(), vehicle.getUuid());

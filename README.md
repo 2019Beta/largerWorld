@@ -38,6 +38,8 @@ local in [-524,288, 524,288)
 
 服务器默认最多同时保留 256 个动态 cell，每 tick 最多创建 16 个。可用 JVM 属性 `largerworld.maxActiveCells` 和 `largerworld.maxCellCreationsPerTick` 调整。
 
+逐实体交接、出生与跟踪诊断日志默认关闭，避免持续运行时产生大量日志写入。排查相关问题时，可添加 JVM 属性 `-Dlargerworld.entityInfoLogging=true` 临时开启。
+
 预测预取默认每 5 tick 运行一次、预测未来 60 tick，并准备入口附近 2 区块半径。可通过 JVM 属性 `largerworld.prefetchIntervalTicks`、`largerworld.prefetchHorizonTicks`、`largerworld.prefetchRadiusChunks` 和 `largerworld.regionPrefetchTtlSeconds` 调整；预取 Ticket 与未消费的 Region 读取会自动过期。
 
 区块生成现在会展开跨 cell 的 `ChunkStatus` 邻区依赖，并在真正的原版生成入口统一执行优先级、背压和全局写集合协调。默认并发生成节点数等于可用处理器数，预测队列上限为 512；可通过 `largerworld.chunkTasks.maxActive` 和 `largerworld.chunkTasks.maxQueuedPrefetch` 调整。真实视距请求优先，且能把尚未开始的预测任务原地提升为交互任务。

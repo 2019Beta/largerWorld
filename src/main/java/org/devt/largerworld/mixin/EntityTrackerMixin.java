@@ -125,7 +125,7 @@ public abstract class EntityTrackerMixin implements CellEntityTracker {
                 || crossingControlledVehicle
                 || crossingContinuousEntity) {
             if (crossingControlledVehicle || crossingContinuousEntity) {
-                Largerworld.LOGGER.info(
+                Largerworld.logEntityInfo(
                         "[cell-handoff-server] PRE_BEGIN_HOLD mode={} type={} id={} uuid={} player={}",
                         crossingControlledVehicle ? "VEHICLE_IDENTITY" : "CONTINUOUS_ENTITY",
                         entity.getType(), entity.getId(), entity.getUuid(), player.getUuid());
@@ -140,7 +140,7 @@ public abstract class EntityTrackerMixin implements CellEntityTracker {
         if (handoffListeners.isEmpty()) {
             return;
         }
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cell-handoff-server] STOP_ALL id={} uuid={} protectedListeners={}",
                 entity.getId(), entity.getUuid(), handoffListeners.size());
         for (PlayerAssociatedNetworkHandler listener :

@@ -30,7 +30,7 @@ public final class ClientContinuousEntityHandoff {
             boolean removed = pending != null
                     && pending.matches(payload)
                     && PENDING.remove(payload.entityId(), pending);
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[continuous-handoff-client] MARKER phase=ABORT id={} uuid={} "
                             + "source={} target={} accepted={}",
                     payload.entityId(), payload.entityUuid(), payload.sourceCell(),
@@ -50,7 +50,7 @@ public final class ClientContinuousEntityHandoff {
                     payload.entityUuid(), payload.sourceCell(),
                     payload.targetCell(), expiresAtNanos);
         });
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[continuous-handoff-client] MARKER phase=BEGIN id={} uuid={} "
                         + "source={} target={} state={}",
                 payload.entityId(), payload.entityUuid(), payload.sourceCell(),
@@ -81,7 +81,7 @@ public final class ClientContinuousEntityHandoff {
             return false;
         }
         if (!pending.claimTargetSpawn()) {
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[continuous-handoff-client] SPAWN phase=DUPLICATE_DROP type={} "
                             + "id={} uuid={} source={} target={}",
                     existing.getType(), existing.getId(), existing.getUuid(),
@@ -138,7 +138,7 @@ public final class ClientContinuousEntityHandoff {
         // perceived as a short slowdown at the seam. The next target movement
         // packet will replace the target through vanilla's normal path.
 
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[continuous-handoff-client] SPAWN phase=CONSUME type={} id={} uuid={} "
                         + "source={} target={} retainedPos={} authoritativePos={} gap={} velocity={} "
                         + "lastRender=({}, {}, {})",

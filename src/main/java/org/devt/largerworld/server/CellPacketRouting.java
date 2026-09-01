@@ -80,7 +80,7 @@ public final class CellPacketRouting {
         }
 
         ORIGINS.put(player, targetCell);
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "Rebased client origin for {} from cell [{}, {}] to [{}, {}]",
                 player.getName().getString(),
                 currentOrigin.x(), currentOrigin.z(), targetCell.x(), targetCell.z());

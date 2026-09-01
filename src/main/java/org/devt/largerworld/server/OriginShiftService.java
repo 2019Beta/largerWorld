@@ -83,7 +83,7 @@ public final class OriginShiftService {
                     // server tick. Let the graph stabilize for one complete tick
                     // so it cannot start as an ordinary entity handoff and finish
                     // as a player vehicle transaction.
-                    Largerworld.LOGGER.info(
+                    Largerworld.logEntityInfo(
                             "[cell-handoff-server] DEFER_RIDING_GRAPH root={} id={} "
                                     + "members={} previousMembers={}",
                             root.getUuid(), root.getId(), graph.members(),
@@ -193,7 +193,7 @@ public final class OriginShiftService {
                 CellPacketRouting.origin(player);
             }
         }
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cross-velocity] SNAPSHOT type={} id={} uuid={} source={} target={} vel={} "
                         + "continuous={} identity={} continuousEntity={}",
                 root.getType(), root.getId(), root.getUuid(),
@@ -276,7 +276,7 @@ public final class OriginShiftService {
                     root.getUuid(), targetCell);
             return false;
         }
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cross-velocity] AFTER_TELEPORT type={} id={} uuid={} vel={}",
                 teleportedRoot.getType(), teleportedRoot.getId(),
                 teleportedRoot.getUuid(), teleportedRoot.getVelocity());
@@ -354,7 +354,7 @@ public final class OriginShiftService {
                     && !playerControlledGraph) {
                 teleportedRoot.velocityDirty = true;
             }
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[cross-velocity] AFTER_RESTORE type={} id={} uuid={} vel={} dirty={}",
                     teleportedRoot.getType(), teleportedRoot.getId(),
                     teleportedRoot.getUuid(), teleportedRoot.getVelocity(),
@@ -456,7 +456,7 @@ public final class OriginShiftService {
                 player.networkHandler.sendPacket(packet);
             }
             if (!graphPlayers.isEmpty()) {
-                Largerworld.LOGGER.info(
+                Largerworld.logEntityInfo(
                         "[cell-handoff-server] MARKER phase={} type={} id={} uuid={} graphRecipients={}",
                         phase, member.getType(), member.getId(), member.getUuid(),
                         graphPlayers.stream().map(player -> player.getUuid().toString()).toList());
@@ -495,7 +495,7 @@ public final class OriginShiftService {
                     member.getUuid(),
                     sourceCell,
                     targetCell));
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[continuous-handoff-server] MARKER phase={} type={} id={} uuid={} "
                             + "source={} target={}",
                     phase, member.getType(), member.getId(), member.getUuid(),
@@ -508,7 +508,7 @@ public final class OriginShiftService {
         if (!(entity instanceof CamelEntity camel)) {
             return;
         }
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cross-camel] phase={} id={} worldTime={} pose={} sitting={} "
                         + "visualSitting={} changing={} lastPoseTick={} poseTime={} passengers={}",
                 phase, camel.getId(), camel.getEntityWorld().getTime(), camel.getPose(),

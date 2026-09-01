@@ -49,7 +49,7 @@ public abstract class EntityTeleportMixin {
 
     @Unique
     private static void largerworld$debugCamel(String phase, CamelEntity camel) {
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cross-camel] phase={} id={} worldTime={} pose={} sitting={} "
                         + "visualSitting={} changing={} lastPoseTick={} poseTime={} passengers={}",
                 phase, camel.getId(), camel.getEntityWorld().getTime(), camel.getPose(),

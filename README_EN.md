@@ -40,6 +40,8 @@ Generation changes only affect newly generated chunks. Vanilla base terrain stil
 
 By default the server keeps at most 256 dynamic cells active and creates at most 16 per tick. JVM properties `largerworld.maxActiveCells` and `largerworld.maxCellCreationsPerTick` configure these limits.
 
+Per-entity handoff, spawn, and tracker diagnostics are disabled by default to avoid excessive log I/O during normal operation. Enable them temporarily for debugging with `-Dlargerworld.entityInfoLogging=true`.
+
 The first load of a cell created by an older version, with no `largerworld_cell_properties.dat`, initializes weather and wandering-trader state once from the base world and persists it independently thereafter. Vanilla `world_border.dat` state is active and rendered again; inspect per-cell border settings after upgrading if borders were edited while the old global suppression was installed.
 
 Full packet mapping, neighbor shadow tracking, and inbound interaction routing are documented in [docs/MULTIPLAYER_ARCHITECTURE.md](docs/MULTIPLAYER_ARCHITECTURE.md).

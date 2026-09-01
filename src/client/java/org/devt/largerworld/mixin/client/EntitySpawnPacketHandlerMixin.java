@@ -59,7 +59,7 @@ public abstract class EntitySpawnPacketHandlerMixin {
         boolean matchingExisting = existing != null
                 && existing.getUuid().equals(packet.getUuid())
                 && ClientEntityHandoff.shouldIgnoreSpawn(existing);
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cell-handoff-client] SPAWN type={} id={} uuid={} source={} existingUuid={} "
                         + "velocity={} identityState={} continuousState={} decision={}",
                 packet.getEntityType(), packet.getEntityId(), packet.getUuid(),
@@ -101,7 +101,7 @@ public abstract class EntitySpawnPacketHandlerMixin {
             boolean ignoreContinuous =
                     ClientContinuousEntityHandoff.shouldIgnoreDestroy(entityId, entity);
             boolean ignore = ignoreIdentity || ignoreContinuous;
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[cell-handoff-client] DESTROY type={} id={} uuid={} source={} "
                             + "identityState={} continuousState={} decision={}",
                     entity == null ? null : entity.getType(), entityId,
@@ -147,7 +147,7 @@ public abstract class EntitySpawnPacketHandlerMixin {
                 packet.getEntityId(), vehicle, packet.getPassengerIds());
         if (!"NONE".equals(handoffState)
                 || ClientCellPacketContext.isApplyingCellPacket()) {
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[cell-handoff-client] PASSENGERS vehicle={} uuid={} source={} "
                             + "incoming={} current={} state={} decision={}",
                     packet.getEntityId(),
@@ -228,7 +228,7 @@ public abstract class EntitySpawnPacketHandlerMixin {
                 || entity instanceof ProjectileEntity
                 || entity.hasPassengers()
                 || !"NONE".equals(handoffState)) {
-            Largerworld.LOGGER.info(
+            Largerworld.logEntityInfo(
                     "[cross-velocity-client] type={} id={} uuid={} source={} identityState={} "
                             + "continuousState={} "
                             + "before={} packet={} decision={}",
@@ -372,7 +372,7 @@ public abstract class EntitySpawnPacketHandlerMixin {
         // republishes an older pose snapshot; applying it makes a camel that
         // has already stood up sit down again. LAST_POSE_TICK is a signed
         // timestamp, so its absolute value gives us an exact ordering key.
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cross-camel-client] phase=PRESERVE_NEWER_LOCAL_POSE id={} "
                         + "source={} currentLastPose={} incomingLastPose={}",
                 camel.getId(), ClientCellPacketContext.sourceCell(),
@@ -390,7 +390,7 @@ public abstract class EntitySpawnPacketHandlerMixin {
                 .map(DataTracker.SerializedEntry::value)
                 .findFirst()
                 .orElse(null);
-        Largerworld.LOGGER.info(
+        Largerworld.logEntityInfo(
                 "[cross-camel-client] phase={} id={} source={} identityState={} "
                         + "continuousState={} worldTime={} pose={} sitting={} visualSitting={} "
                         + "changing={} currentLastPose={} incomingLastPose={} poseTime={} "
