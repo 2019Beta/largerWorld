@@ -16,6 +16,7 @@ public final class CellChunkTaskEngineChecks {
         separatesDifferentTaskKeys();
         removesFailedTasksForRetry();
         detectsWhetherAViewCanReachASeam();
+        preparesHandoffRetentionBeforeCrossing();
         predictsFastApproachesBeforeTheViewTouchesTheSeam();
         coalescesChunkWritesAndDefersSerialization();
         retriesFailedChunkWrites();
@@ -100,6 +101,30 @@ public final class CellChunkTaskEngineChecks {
                 "view touching the positive seam is scanned");
         check(!CellViewTracker.viewStaysInsideCell(-32758, 0, 10),
                 "view touching the negative seam is scanned");
+    }
+
+    private static void preparesHandoffRetentionBeforeCrossing() {
+        org.devt.largerworld.coordinate.CellPos source =
+                org.devt.largerworld.coordinate.CellPos.ZERO;
+        org.devt.largerworld.coordinate.CellPos east = source.add(1, 0);
+        java.util.Set<org.devt.largerworld.coordinate.VirtualChunkPos> retained =
+                CellViewTracker.handoffRetentionChunks(
+                        source, east,
+                        org.devt.largerworld.coordinate.VirtualChunkPos.HALF_CELL_CHUNKS - 1,
+                        0,
+                        10);
+
+        check(!retained.isEmpty(),
+                "approaching a seam prepares the source half of the next view");
+        check(retained.stream().allMatch(pos -> pos.cell().equals(source)),
+                "handoff preparation retains only source-cell chunks");
+        check(retained.stream().anyMatch(pos ->
+                        pos.localX()
+                                == org.devt.largerworld.coordinate.VirtualChunkPos.HALF_CELL_CHUNKS - 1),
+                "handoff preparation includes the source boundary column");
+        check(CellViewTracker.handoffRetentionChunks(
+                        source, source.add(2, 0), 0, 0, 10).isEmpty(),
+                "handoff preparation ignores non-adjacent cells");
     }
 
     private static void predictsFastApproachesBeforeTheViewTouchesTheSeam() {

@@ -99,6 +99,7 @@ public final class CellViewTracker {
         Set<VirtualChunkPos> desired = state.desiredShadowChunks(
                 currentCell, centerX, centerZ, radius);
 
+        state.prepareFutureHandoff(currentCell, centerX, centerZ, radius, desired);
         state.updateWatches(server, desired);
         state.updateEntities();
         state.tickHandoff();
@@ -379,6 +380,14 @@ public final class CellViewTracker {
     private static final class PlayerState {
         private ServerPlayerEntity player;
         private final Map<VirtualChunkPos, Watch> watches = new HashMap<>();
+        /**
+         * Source-cell chunks that vanilla owns now but will become shadow chunks
+         * immediately after the next seam crossing. Their tickets are installed
+         * incrementally while the neighboring cell is already visible, avoiding
+         * a large distance-graph update on the exact vehicle handoff tick.
+         */
+        private final Map<VirtualChunkPos, Watch> preparedHandoffWatches =
+                new HashMap<>();
         private final Set<CellEntityTracker> trackedEntities = new HashSet<>();
         private final Set<VirtualChunkPos> pendingHandoffChunks = new HashSet<>();
         private final Set<VirtualChunkPos> retainedHandoffChunks = new HashSet<>();
@@ -390,6 +399,7 @@ public final class CellViewTracker {
         private int desiredCenterZ = Integer.MIN_VALUE;
         private int desiredRadius = Integer.MIN_VALUE;
         private boolean desiredWindowChanged;
+        private List<VirtualChunkPos> orderedPreparedHandoffChunks = List.of();
         private @Nullable CellPos handoffSourceCell;
         private int handoffTicks;
 
@@ -421,6 +431,59 @@ public final class CellViewTracker {
             orderedShadowChunks = List.copyOf(ordered);
             desiredWindowChanged = true;
             return desiredShadowChunks;
+        }
+
+        private void prepareFutureHandoff(
+                CellPos currentCell,
+                int centerX,
+                int centerZ,
+                int radius,
+                Set<VirtualChunkPos> visibleShadowChunks) {
+            if (desiredWindowChanged) {
+                Set<CellPos> candidateTargets = new HashSet<>();
+                for (VirtualChunkPos shadow : visibleShadowChunks) {
+                    if (!shadow.cell().equals(currentCell)) {
+                        candidateTargets.add(shadow.cell());
+                    }
+                }
+
+                Set<VirtualChunkPos> desiredPrepared = new HashSet<>();
+                for (CellPos targetCell : candidateTargets) {
+                    desiredPrepared.addAll(handoffRetentionChunks(
+                            currentCell, targetCell, centerX, centerZ, radius));
+                }
+
+                List<VirtualChunkPos> ordered = new ArrayList<>(desiredPrepared);
+                ordered.sort(Comparator.comparingLong(pos -> {
+                    long dx = (long) pos.clientX(currentCell) - centerX;
+                    long dz = (long) pos.clientZ(currentCell) - centerZ;
+                    return dx * dx + dz * dz;
+                }));
+                orderedPreparedHandoffChunks = List.copyOf(ordered);
+
+                for (VirtualChunkPos old
+                        : new ArrayList<>(preparedHandoffWatches.keySet())) {
+                    if (!desiredPrepared.contains(old)) {
+                        removePreparedHandoff(old);
+                    }
+                }
+            }
+
+            int started = 0;
+            for (VirtualChunkPos wanted : orderedPreparedHandoffChunks) {
+                if (preparedHandoffWatches.containsKey(wanted)
+                        || watches.containsKey(wanted)) {
+                    continue;
+                }
+                if (started++ >= MAX_SHADOW_CHUNK_LOADS_STARTED_PER_TICK) {
+                    break;
+                }
+                ServerWorld world = player.getEntityWorld();
+                Watch watch = new Watch(
+                        world, new ChunkPos(wanted.localX(), wanted.localZ()));
+                preparedHandoffWatches.put(wanted, watch);
+                retainTicket(world, watch.localPos);
+            }
         }
 
         private Watch ensureWatch(MinecraftServer server, VirtualChunkPos pos) {
@@ -538,18 +601,21 @@ public final class CellViewTracker {
         private void claimVanillaChunk(MinecraftServer server, VirtualChunkPos pos) {
             Watch watch = watches.get(pos);
             if (watch == null) {
-                ServerWorld world;
-                try {
-                    world = CellWorldManager.getOrCreate(
-                            server,
-                            CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
-                            pos.cell());
-                } catch (CellWorldManager.CellCapacityException exception) {
-                    return;
+                watch = preparedHandoffWatches.remove(pos);
+                if (watch == null) {
+                    ServerWorld world;
+                    try {
+                        world = CellWorldManager.getOrCreate(
+                                server,
+                                CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey()),
+                                pos.cell());
+                    } catch (CellWorldManager.CellCapacityException exception) {
+                        return;
+                    }
+                    watch = new Watch(world, new ChunkPos(pos.localX(), pos.localZ()));
+                    retainTicket(watch.world, watch.localPos);
                 }
-                watch = new Watch(world, new ChunkPos(pos.localX(), pos.localZ()));
                 watches.put(pos, watch);
-                retainTicket(watch.world, watch.localPos);
             }
             watch.sent = true;
         }
@@ -617,6 +683,13 @@ public final class CellViewTracker {
             releaseTicket(watch.world, watch.localPos);
         }
 
+        private void removePreparedHandoff(VirtualChunkPos pos) {
+            Watch watch = preparedHandoffWatches.remove(pos);
+            if (watch != null) {
+                releaseTicket(watch.world, watch.localPos);
+            }
+        }
+
         private void updateEntities() {
             Set<CellEntityTracker> desired = new HashSet<>();
             Map<ServerWorld, Set<Long>> byWorld = new HashMap<>();
@@ -625,7 +698,6 @@ public final class CellViewTracker {
                     byWorld.computeIfAbsent(watch.world, ignored -> new HashSet<>()).add(watch.localPos.toLong());
                 }
             }
-
             for (Map.Entry<ServerWorld, Set<Long>> entry : byWorld.entrySet()) {
                 ServerWorld world = entry.getKey();
                 Int2ObjectMap<?> trackers = ((ServerChunkLoadingManagerAccessor)
@@ -685,8 +757,13 @@ public final class CellViewTracker {
                 releaseTicket(watch.world, watch.localPos);
             }
             watches.clear();
+            for (Watch watch : preparedHandoffWatches.values()) {
+                releaseTicket(watch.world, watch.localPos);
+            }
+            preparedHandoffWatches.clear();
             desiredShadowChunks = Set.of();
             orderedShadowChunks = List.of();
+            orderedPreparedHandoffChunks = List.of();
             desiredCell = null;
             desiredCenterX = Integer.MIN_VALUE;
             desiredCenterZ = Integer.MIN_VALUE;
@@ -706,6 +783,45 @@ public final class CellViewTracker {
                 tracker.largerworld$stopShadowTracking(player, handedToVanilla);
             }
         }
+    }
+
+    /**
+     * Computes the source chunks that become shadows at the entry edge of an
+     * adjacent target cell. Package visibility keeps the transition planner
+     * deterministic and directly testable without a running server.
+     */
+    static Set<VirtualChunkPos> handoffRetentionChunks(
+            CellPos sourceCell,
+            CellPos targetCell,
+            int sourceCenterX,
+            int sourceCenterZ,
+            int radius) {
+        long deltaX = targetCell.deltaXExact(sourceCell);
+        long deltaZ = targetCell.deltaZExact(sourceCell);
+        if (Math.abs(deltaX) > 1L || Math.abs(deltaZ) > 1L
+                || deltaX == 0L && deltaZ == 0L) {
+            return Set.of();
+        }
+
+        int targetCenterX = deltaX > 0L
+                ? -VirtualChunkPos.HALF_CELL_CHUNKS
+                : deltaX < 0L
+                ? VirtualChunkPos.HALF_CELL_CHUNKS - 1
+                : sourceCenterX;
+        int targetCenterZ = deltaZ > 0L
+                ? -VirtualChunkPos.HALF_CELL_CHUNKS
+                : deltaZ < 0L
+                ? VirtualChunkPos.HALF_CELL_CHUNKS - 1
+                : sourceCenterZ;
+
+        Set<VirtualChunkPos> retained = new HashSet<>();
+        for (VirtualChunkPos pos
+                : desiredShadowChunks(targetCell, targetCenterX, targetCenterZ, radius)) {
+            if (pos.cell().equals(sourceCell)) {
+                retained.add(pos);
+            }
+        }
+        return retained;
     }
 
     private static void retainTicket(ServerWorld world, ChunkPos pos) {
