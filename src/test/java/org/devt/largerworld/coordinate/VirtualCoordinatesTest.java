@@ -55,7 +55,7 @@ public final class VirtualCoordinatesTest {
         VirtualPosition p = VirtualPosition.normalize(new CellPos(7, 2), 524288.0, 70, 0);
         equal(8, p.cell().x(), "positive cell crossing");
         equal(-524288.0, p.localX(), "positive local wrap");
-        equal("8388608.000", p.globalX(3), "positive global continuity");
+        equal("7864320.000", p.globalX(3), "positive global continuity");
     }
 
     private static void crossesNegativeBoundary() {
