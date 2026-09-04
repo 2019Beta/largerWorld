@@ -73,6 +73,13 @@ tasks.named("check") {
     dependsOn tasks.named("coordinateTest")
 }
 
+// The custom checks live in main-method entry points and are run by coordinateTest.
+// Gradle 9.5 otherwise fails the conventional test task when it discovers no
+// JUnit/TestNG tests in this source set.
+tasks.named("test", Test) {
+    failOnNoDiscoveredTests = false
+}
+
 processResources {
     inputs.property "version", project.version
     inputs.property "minecraft_version", project.minecraft_version
