@@ -55,6 +55,7 @@ tasks.register("coordinateTest", JavaExec) {
     group = "verification"
     description = "Runs the coordinate model checks in the Fabric-transformed runtime."
     dependsOn tasks.named("testClasses")
+    dependsOn tasks.named("configureLaunch")
     // A plain JavaExec exposes named Minecraft classes without Fabric's runtime
     // access widening. Keep the game jar for Knot to load and transform instead.
     classpath = sourceSets.test.runtimeClasspath.filter { file ->
