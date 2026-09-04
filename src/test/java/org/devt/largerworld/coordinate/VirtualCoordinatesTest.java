@@ -1,5 +1,6 @@
 package org.devt.largerworld.coordinate;
 
+import net.minecraft.Bootstrap;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.util.Identifier;
@@ -22,6 +23,7 @@ public final class VirtualCoordinatesTest {
     }
 
     public static void main(String[] args) {
+        Bootstrap.initialize();
         remainsInsideCanonicalCell();
         crossesPositiveBoundary();
         crossesNegativeBoundary();
