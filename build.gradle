@@ -53,10 +53,19 @@ dependencies {
 
 tasks.register("coordinateTest", JavaExec) {
     group = "verification"
-    description = "Runs the dependency-free coordinate model tests."
+    description = "Runs the coordinate model checks in the Fabric-transformed runtime."
     dependsOn tasks.named("testClasses")
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "org.devt.largerworld.coordinate.VirtualCoordinatesTest"
+    // A plain JavaExec exposes named Minecraft classes without Fabric's runtime
+    // access widening. Keep the game jar for Knot to load and transform instead.
+    classpath = sourceSets.test.runtimeClasspath.filter { file ->
+        !file.name.startsWith("minecraft-")
+    }
+    mainClass = "org.devt.largerworld.coordinate.FabricCoordinateTestLauncher"
+    workingDir = projectDir
+    systemProperty "largerworld.coordinateTest.launchConfig",
+            file(".gradle/loom-cache/launch.cfg").absolutePath
+    systemProperty "largerworld.coordinateTest.classes",
+            sourceSets.test.output.classesDirs.asPath
 }
 
 tasks.named("check") {
