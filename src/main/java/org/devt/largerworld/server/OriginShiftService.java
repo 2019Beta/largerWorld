@@ -162,7 +162,13 @@ public final class OriginShiftService {
             return false;
         }
         List<Entity> sourceMembers = root.streamSelfAndPassengers().toList();
-        boolean playerControlledGraph = continuousMovement
+        for (Entity member : sourceMembers) {
+            if (member instanceof ServerPlayerEntity player) {
+                CellPacketRouting.rebaseForDistantTeleport(player, targetCell);
+            }
+        }
+        boolean seamlessMovement = continuousMovement;
+        boolean playerControlledGraph = seamlessMovement
                 && sourceMembers.stream().anyMatch(
                 member -> member instanceof ServerPlayerEntity player
                         && player.hasVehicle());
@@ -173,7 +179,7 @@ public final class OriginShiftService {
         // graphs keep their client objects too, but consume the authoritative
         // destination spawn into those same objects.
         boolean preserveClientIdentity = playerControlledGraph;
-        boolean preserveContinuousEntity = continuousMovement
+        boolean preserveContinuousEntity = seamlessMovement
                 && !graphContainsPlayer;
         boolean protectSourceClientEntity =
                 preserveClientIdentity || preserveContinuousEntity;
@@ -225,7 +231,7 @@ public final class OriginShiftService {
         // Claim the source view before vanilla starts moving the root. Waiting
         // for the passenger teleport is too late because the old root tracker
         // has already been stopped by then.
-        if (continuousMovement) {
+        if (seamlessMovement) {
             for (Entity member : sourceMembers) {
                 if (member instanceof ServerPlayerEntity player) {
                     CellViewTracker.prepareTransition(
@@ -243,18 +249,22 @@ public final class OriginShiftService {
                 root.getYaw(),
                 root.getPitch(),
                 TeleportTarget.NO_OP);
-        boolean requiresVanillaRebase = sourceMembers.stream()
-                .filter(ServerPlayerEntity.class::isInstance)
-                .map(ServerPlayerEntity.class::cast)
-                .anyMatch(player -> CellPacketRouting.requiresOriginRebase(
-                        player, targetCell));
         Entity teleportedRoot = CellPacketRouting.withSourceResult(targetWorld, () ->
                 SeamlessCellTeleport.withCellHandoff(
-                        continuousMovement,
-                        () -> requiresVanillaRebase || sourceWorld == targetWorld
+                        seamlessMovement,
+                        () -> sourceWorld == targetWorld
                                 ? root.teleportTo(target)
                                 : SeamlessCellTeleport.teleportGraphInPlace(root, target)));
         if (teleportedRoot == null) {
+            for (Entity member : sourceMembers) {
+                if (member instanceof ServerPlayerEntity player && player.getEntityWorld() == sourceWorld
+                        && CellPacketRouting.rebaseForDistantTeleport(
+                                player, CellWorldKey.cell(sourceWorld.getRegistryKey()))) {
+                    CellPacketRouting.withSource(sourceWorld, () -> player.networkHandler.requestTeleport(
+                            new net.minecraft.entity.EntityPosition(player.getEntityPos(), player.getVelocity(),
+                                    player.getYaw(), player.getPitch()), java.util.Set.of()));
+                }
+            }
             if (protectSourceClientEntity) {
                 abortSourceTrackerProtection(sourceWorld, sourceMembers);
             }
@@ -265,7 +275,7 @@ public final class OriginShiftService {
                         targetCell,
                         sourceMembers);
             }
-            if (continuousMovement) {
+            if (seamlessMovement) {
                 for (Entity member : sourceMembers) {
                     if (member instanceof ServerPlayerEntity player) {
                         CellViewTracker.abortTransition(player);
@@ -289,13 +299,13 @@ public final class OriginShiftService {
         }
         targetMembers.forEach(member -> debugCamel("AFTER_TELEPORT", member));
 
-        // Update the synchronized logical cell only after teleportTo has rebased
-        // the network origin and completed the vanilla world change. Setting it
+        // Update the synchronized logical cell only after the connection origin
+        // and server-world handoff have completed. Setting it
         // before teleport let persistent state report the destination while the
         // player was still in the source world, so transition packets could be
         // tagged as destination-cell data (or discarded as outside the old
         // client window). On an integrated client that left stale source chunks
-        // mixed into the freshly loaded destination terrain.
+        // mixed into the destination terrain.
         CellPacketRouting.withSource(targetWorld, () -> {
             for (Entity member : targetMembers) {
                 if (member instanceof ServerPlayerEntity player) {
@@ -305,16 +315,14 @@ public final class OriginShiftService {
             }
         });
 
-        // In-place cell moves keep these references identical. UUID indexing is
-        // retained for the distant vanilla-rebase fallback, which still rebuilds
-        // ordinary entities because the client needs a complete world reload.
+        // In-place cell moves keep references identical. UUID indexing also
+        // handles the ordinary same-world teleport path.
         Map<UUID, Entity> rebuiltMembers = new HashMap<>();
         for (Entity member : targetMembers) {
             rebuiltMembers.put(member.getUuid(), member);
         }
 
-        // The in-place path already retains live targets. Reapply the snapshot
-        // for the distant vanilla-rebase fallback after its rebuilt graph exists.
+        // Reapply the target snapshot after the destination graph exists.
         for (Map.Entry<UUID, UUID> entry : mobTargetIds.entrySet()) {
             Entity rebuilt = rebuiltMembers.get(entry.getKey());
             if (!(rebuilt instanceof MobEntity mob)) {
@@ -329,8 +337,7 @@ public final class OriginShiftService {
             }
         }
 
-        // Reassert velocity after registration. This is redundant for the
-        // in-place path but remains necessary for the vanilla-rebase fallback.
+        // Reassert velocity after registration and any ordinary teleport path.
         for (Entity member : targetMembers) {
             if (member == teleportedRoot) {
                 continue;

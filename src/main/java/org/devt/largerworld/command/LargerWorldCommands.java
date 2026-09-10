@@ -16,6 +16,7 @@ import net.minecraft.util.math.MathHelper;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
+import org.devt.largerworld.coordinate.GlobalCoordinateInput;
 import org.devt.largerworld.server.OriginShiftService;
 import org.devt.largerworld.server.CellChunkTaskEngine;
 import org.devt.largerworld.world.CellWorldKey;
@@ -58,8 +59,8 @@ public final class LargerWorldCommands {
     private static int teleport(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = context.getSource().getPlayerOrThrow();
         try {
-            BigDecimal globalX = new BigDecimal(StringArgumentType.getString(context, "globalX"));
-            BigDecimal globalZ = new BigDecimal(StringArgumentType.getString(context, "globalZ"));
+            BigDecimal globalX = GlobalCoordinateInput.parse(StringArgumentType.getString(context, "globalX"));
+            BigDecimal globalZ = GlobalCoordinateInput.parse(StringArgumentType.getString(context, "globalZ"));
             double y = DoubleArgumentType.getDouble(context, "y");
             VirtualPosition target = VirtualPosition.fromGlobal(globalX, y, globalZ);
 
@@ -102,6 +103,9 @@ public final class LargerWorldCommands {
                  | CellWorldManager.CellCapacityException exception) {
             context.getSource().sendError(Text.literal("Invalid or unsupported global coordinate: "
                     + exception.getMessage()));
+            return 0;
+        } catch (java.io.UncheckedIOException exception) {
+            context.getSource().sendError(Text.literal("Could not open cell storage: " + rootMessage(exception)));
             return 0;
         }
     }

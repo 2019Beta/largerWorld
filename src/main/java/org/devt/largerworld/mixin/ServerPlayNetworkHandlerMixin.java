@@ -78,7 +78,8 @@ public abstract class ServerPlayNetworkHandlerMixin {
     @Inject(method = "onSignUpdate", at = @At("HEAD"), cancellable = true)
     private void largerworld$routeSignUpdate(
             UpdateSignC2SPacket packet, List<FilteredMessage> messages, CallbackInfo ci) {
-        if (CellInteractionRouting.handleSignUpdate(player, packet, messages)) {
+        if (CellPacketRouting.withInputPacket(player, packet,
+                () -> CellInteractionRouting.handleSignUpdate(player, packet, messages))) {
             ci.cancel();
         }
     }

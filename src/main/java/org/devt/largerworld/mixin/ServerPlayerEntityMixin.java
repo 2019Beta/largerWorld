@@ -56,14 +56,8 @@ public abstract class ServerPlayerEntityMixin {
         }
         if (CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey())
                 .equals(CellWorldKey.baseWorld(target.world().getRegistryKey()))) {
-            // A stable client origin cannot represent arbitrarily distant cells:
-            // vanilla clamps entity positions at 30 million and BlockPos is int.
-            // Rebase before the first target-world packet and let vanilla send a
-            // respawn packet so stale chunks/entities from the old origin vanish.
-            if (CellPacketRouting.rebaseForDistantTeleport(
-                    player, CellWorldKey.cell(target.world().getRegistryKey()))) {
-                return;
-            }
+            CellPacketRouting.rebaseForDistantTeleport(
+                    player, CellWorldKey.cell(target.world().getRegistryKey()));
             cir.setReturnValue(SeamlessCellTeleport.teleport(player, target));
         }
     }

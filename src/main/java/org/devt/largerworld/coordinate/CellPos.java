@@ -11,8 +11,6 @@ import java.math.BigInteger;
 
 /** Identifies one 2^20 by 2^20 block coordinate cell. */
 public record CellPos(BigInteger x, BigInteger z) {
-    /** Prevents a malicious packet from allocating an unbounded BigInteger. */
-    public static final int MAX_NETWORK_BYTES = 512;
     public static final CellPos ZERO = new CellPos(BigInteger.ZERO, BigInteger.ZERO);
 
     private static final Codec<BigInteger> BIG_INTEGER_CODEC = Codec.either(
@@ -36,20 +34,26 @@ public record CellPos(BigInteger x, BigInteger z) {
             PacketCodec.of(
                     (value, buf) -> {
                         byte[] encoded = value.toByteArray();
-                        if (encoded.length > MAX_NETWORK_BYTES) {
-                            throw new IllegalArgumentException(
-                                    "Cell coordinate exceeds network limit of "
-                                            + MAX_NETWORK_BYTES + " bytes");
-                        }
                         buf.writeByteArray(encoded);
                     },
                     buf -> {
-                        byte[] encoded = buf.readByteArray(MAX_NETWORK_BYTES);
-                        if (encoded.length == 0) {
-                            throw new IllegalArgumentException("Empty cell coordinate");
-                        }
-                        return new BigInteger(encoded);
+                        return readInteger(buf);
                     });
+
+    /**
+     * The enclosing Minecraft/Fabric frame already has a size limit. Validate
+     * against bytes actually received before allocating, instead of imposing a
+     * second, unrelated 4096-bit coordinate ceiling.
+     */
+    private static BigInteger readInteger(RegistryByteBuf buf) {
+        int length = buf.readVarInt();
+        if (length <= 0 || length > buf.readableBytes()) {
+            throw new IllegalArgumentException("Invalid cell coordinate byte length: " + length);
+        }
+        byte[] encoded = new byte[length];
+        buf.readBytes(encoded);
+        return new BigInteger(encoded);
+    }
 
     public static final Codec<CellPos> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             BIG_INTEGER_CODEC.fieldOf("x").forGetter(CellPos::x),

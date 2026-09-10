@@ -4,17 +4,17 @@ import com.mojang.serialization.MapCodec;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.biome.source.BiomeSource;
+import net.minecraft.world.biome.source.TheEndBiomeSource;
 import net.minecraft.world.biome.source.util.MultiNoiseUtil;
+import net.minecraft.world.gen.densityfunction.DensityFunction;
 import org.devt.largerworld.coordinate.CellPos;
-import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.mixin.BiomeSourceAccessor;
+import org.devt.largerworld.mixin.TheEndBiomeSourceAccessor;
 
 import java.util.stream.Stream;
-import java.math.BigInteger;
 
 /** Samples the canonical biome source at this cell's global quart coordinates. */
 public final class CellBiomeSource extends BiomeSource {
-    private static final long CELL_SIZE_BIOMES = VirtualPosition.CELL_SIZE / 4L;
 
     private final BiomeSource delegate;
     private final CellPos cell;
@@ -41,18 +41,28 @@ public final class CellBiomeSource extends BiomeSource {
     @Override
     public RegistryEntry<Biome> getBiome(
             int biomeX, int biomeY, int biomeZ, MultiNoiseUtil.MultiNoiseSampler noise) {
+        if (delegate instanceof TheEndBiomeSource && !cell.equals(CellPos.ZERO)) {
+            // Only the actual origin cell may contain the central End biome.
+            // Folded ints near zero in a remote cell must not create it again.
+            int blockX = WorldgenCoordinates.toGlobalBlockX(cell, biomeX << 2);
+            int blockZ = WorldgenCoordinates.toGlobalBlockZ(cell, biomeZ << 2);
+            int sampleX = (blockX & ~15) + 8;
+            int sampleZ = (blockZ & ~15) + 8;
+            double erosion = noise.erosion().sample(
+                    new DensityFunction.UnblendedNoisePos(sampleX, biomeY << 2, sampleZ));
+            TheEndBiomeSourceAccessor end = (TheEndBiomeSourceAccessor) delegate;
+            if (erosion > 0.25) {
+                return end.largerworld$highlands();
+            }
+            if (erosion >= -0.0625) {
+                return end.largerworld$midlands();
+            }
+            return erosion < -0.21875 ? end.largerworld$smallIslands() : end.largerworld$barrens();
+        }
         return delegate.getBiome(
-                offset(biomeX, cell.x()),
+                WorldgenCoordinates.toGlobalBiomeX(cell, biomeX),
                 biomeY,
-                offset(biomeZ, cell.z()),
+                WorldgenCoordinates.toGlobalBiomeZ(cell, biomeZ),
                 noise);
-    }
-
-    private static int offset(int local, BigInteger cellCoordinate) {
-        // BiomeSource is int-based just like noise generation. Use the same
-        // deterministic low-32-bit folding instead of failing at distant cells.
-        return cellCoordinate.multiply(BigInteger.valueOf(CELL_SIZE_BIOMES))
-                .add(BigInteger.valueOf(local))
-                .intValue();
     }
 }

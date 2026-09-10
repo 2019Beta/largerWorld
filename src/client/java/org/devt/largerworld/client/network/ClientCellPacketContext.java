@@ -45,6 +45,15 @@ public final class ClientCellPacketContext {
         return origin == null ? fallback : origin;
     }
 
+    public static void setConnectionOrigin(CellPos origin) {
+        connectionOrigin = origin;
+    }
+
+    public static void reset() {
+        connectionOrigin = null;
+        ACTIVE.remove();
+    }
+
     public static boolean isApplyingCellPacket() {
         return activeMapping() != null;
     }

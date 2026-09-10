@@ -17,4 +17,7 @@ public interface EntityAccessor {
 
     @Accessor("lastPos")
     void largerworld$setLastPos(Vec3d position);
+
+    @Accessor("lastPos")
+    Vec3d largerworld$getLastPos();
 }

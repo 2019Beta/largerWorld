@@ -10,6 +10,7 @@ import org.devt.largerworld.coordinate.CellPos;
 import java.util.Arrays;
 import java.math.BigInteger;
 import java.util.Optional;
+import net.minecraft.network.PacketByteBuf;
 
 /** Reversible encoding of a base dimension and cell into a World registry key. */
 public final class CellWorldKey {
@@ -37,6 +38,14 @@ public final class CellWorldKey {
 
     public static CellPos cell(RegistryKey<World> world) {
         return parse(world).map(Parsed::cell).orElse(CellPos.ZERO);
+    }
+
+    /** Fail before creating a world or moving a player, not inside packet IO. */
+    public static void requireNetworkEncodable(RegistryKey<World> key) {
+        if (key.getValue().toString().length() > PacketByteBuf.DEFAULT_MAX_STRING_LENGTH) {
+            throw new IllegalArgumentException("Cell dimension identifier exceeds Minecraft's "
+                    + PacketByteBuf.DEFAULT_MAX_STRING_LENGTH + " character packet limit");
+        }
     }
 
     public static Optional<Parsed> parse(RegistryKey<World> world) {

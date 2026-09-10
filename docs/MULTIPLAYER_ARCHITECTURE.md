@@ -17,8 +17,13 @@ base dimension + CellPos
 largerworld:cell/<namespace>/<dimension>/<cellX>/<cellZ>
             |
             v
-dimensions/largerworld/cell/.../{region,entities,poi}
+largerworld_cells/<sha256-prefix>/<sha256-rest>/{region,entities,poi}
 ```
+
+`DimensionType.getSaveDirectory` routes new cells to a bounded-length path.
+`cell-key.txt` stores and verifies the complete reversible registry key. Existing
+legacy `dimensions/largerworld/cell/...` directories stay in use; conflicts,
+unreadable legacy paths, and missing/mismatched compact manifests fail closed.
 
 Cell worlds are created on the server thread when first requested. Their registry
 keys are reversible, allowing player NBT that references a cell world to load it
@@ -53,14 +58,16 @@ structure-layout seeds and decoration seeds use the corresponding global chunk o
 block coordinates, so newly generated terrain continues across a seam while all
 persisted positions remain cell-local.
 
-Vanilla exposes noise, biome and several structure sampling coordinates as
-32-bit integers, so the vanilla base field is still folded at those API
-boundaries. Larger World additionally samples a continuous density overlay from
-the full arbitrary-precision global lattice coordinate. Carver, decoration and
-region random tokens hash the complete coordinate as well. The combined
-generator has no fixed low-32-bit world period, while the overlay evaluates the
-same function on both sides of every cell seam. Persistent/global player
-positions are never folded.
+Vanilla-facing integers are folded transport coordinates, with biome quart
+coordinates now folding at the same block boundary as density. Registered noise
+leaves reconstruct full global coordinates. Ordinary, shifted, cave, base 3D,
+and End island noise blend bounded native samples selected by arbitrary-precision
+65,536-block patch identities. Activation starts at `2^30` blocks and completes
+at `2^31 - 2^20`, before signed-int wrapping can affect the active field. The
+density overlay and full-coordinate random tokens remain in use. Near-origin
+cells skip the arbitrary-precision sampling path. Persistent/global player
+positions are never folded, and remote End cells cannot reproduce the center
+biome solely because their folded coordinates happen to be near zero.
 
 This only affects chunks generated after the arbitrary-precision layer is installed. Existing
 cell RegionFiles retain their old terrain and must not be mixed with regenerated
@@ -184,7 +191,7 @@ When a player crosses the canonical local boundary, the server moves the player
 to the target `ServerWorld` without sending `PlayerRespawnS2CPacket`. The normal
 position-correction packet is tagged with the target cell, so it resolves to the
 same continuous client coordinate. Server movement packets are converted from the
-stable client origin back into the player's current local cell.
+explicit sending origin back into the player's current local cell.
 
 Digging, block use and entity interaction first resolve their client coordinate or
 tracked entity against the visible neighbor cell. If the target is remote, the
@@ -197,11 +204,20 @@ sequence and screen-distance checks instead of duplicating them.
 The connection origin stays stable during ordinary seam crossings. Before a
 distant teleport or roughly 29 cell crossings would exceed vanilla's
 approximately 30-million-block safety range, the server rebases the origin to the
-target cell and uses one vanilla client-world reload to discard state mapped with
-the old origin. A sign opened across a seam retains its target world and editor
-lifetime until the filtered update is applied. Other vanilla position-bearing
-editor actions (command, structure, jigsaw, and test blocks) are translated and
-executed in their owning cell.
+target cell using `OriginRebasePayload`, without a respawn or replacement
+`ClientWorld`. The client drains queued chunk/light work and block predictions,
+copies loaded chunk/light data in memory, shifts entity history and tracker
+coordinates, and reapplies the retained chunks at their translated positions.
+Render caches are refreshed, so a frame-time spike is still possible. A very
+distant teleport clears data outside the new window and streams the destination
+normally. In-place server graph transfers also remain available after rebasing.
+
+`CellInputPayload` tags movement and position-bearing editor/interaction packets
+with their sending origin. Server-side input context is separate from outgoing
+packet context; a response always uses the current origin. Unsupported/nested
+input frames and obsolete distant input are rejected. Deferred sign filtering
+retains the input packet's original context. Client and server must have matching
+protocol support; disconnect clears client origin and handoff state.
 
 For loaded neighboring cells, block writes, neighbor-update chains, synchronized
 block events and scheduled block/fluid ticks are projected to the owning backing
@@ -214,8 +230,12 @@ must be loaded and ticking for propagation to continue.
 Cell coordinates are arbitrary-precision integers. Legacy long-valued player
 attachments remain readable. Network mappings subtract source and origin cells
 exactly before converting a bounded relative result to an int or double. The
-packet representation limits each integer to 512 bytes as a denial-of-service
-guard, without imposing a machine integer width on storage arithmetic.
+packet representation validates lengths against bytes actually received before
+allocating, instead of imposing the former 512-byte integer limit. Network frame
+limits still apply. Reversible world keys remain subject to vanilla's 32,767
+character identifier limit, checked before creating a cell. Command exponent
+notation is bounded before expanding a coordinate. These are protocol/resource
+constraints, not a fixed integer width on storage arithmetic.
 
 Dynamic worlds are limited to 256 active cells and 16 new cells per server tick
 by default. Empty cells are saved and closed before removal from the server world

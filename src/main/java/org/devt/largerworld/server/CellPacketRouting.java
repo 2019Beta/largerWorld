@@ -20,6 +20,8 @@ import org.devt.largerworld.coordinate.VirtualChunkPos;
 import org.devt.largerworld.network.CellPacketPayload;
 import org.devt.largerworld.network.ContinuousEntityHandoffPayload;
 import org.devt.largerworld.network.EntityHandoffPayload;
+import org.devt.largerworld.network.OriginRebasePayload;
+import org.devt.largerworld.network.CellInputPayload;
 import org.devt.largerworld.world.CellWorldKey;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
@@ -36,15 +38,18 @@ import java.util.function.Supplier;
 public final class CellPacketRouting {
     /**
      * Keep an entire cell inside vanilla's valid horizontal block range. Crossing
-     * this threshold requires a client-world reload with a fresh network origin.
+     * this threshold shifts client caches to a fresh network origin.
      */
     private static final double CLIENT_ORIGIN_REBASE_LIMIT =
             World.HORIZONTAL_LIMIT - (double) VirtualPosition.HALF_CELL;
     private static final long MAX_CLIENT_CELL_DELTA =
             (long) ((CLIENT_ORIGIN_REBASE_LIMIT - 1.0) / VirtualPosition.CELL_SIZE);
     private static final ThreadLocal<CellPos> ACTIVE_SOURCE = new ThreadLocal<>();
+    private static final ThreadLocal<InputContext> ACTIVE_INPUT = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> DIRECT_UNLOAD = ThreadLocal.withInitial(() -> false);
     private static final Map<ServerPlayerEntity, CellPos> ORIGINS = new WeakHashMap<>();
+    private static final Map<Packet<?>, InputContext> INPUT_ORIGINS =
+            java.util.Collections.synchronizedMap(new WeakHashMap<>());
 
     private CellPacketRouting() {
     }
@@ -57,11 +62,16 @@ public final class CellPacketRouting {
         synchronized (CellPacketRouting.class) {
             ORIGINS.remove(player);
         }
+        synchronized (INPUT_ORIGINS) {
+            INPUT_ORIGINS.values().removeIf(context -> context.player() == player);
+        }
     }
 
     public static synchronized void clearServerState() {
         ORIGINS.clear();
         ACTIVE_SOURCE.remove();
+        ACTIVE_INPUT.remove();
+        INPUT_ORIGINS.clear();
         DIRECT_UNLOAD.remove();
     }
 
@@ -69,8 +79,7 @@ public final class CellPacketRouting {
      * Moves the per-connection network origin when the target cell can no longer
      * be represented safely by vanilla client coordinates.
      *
-     * @return {@code true} when the caller must use a full vanilla world change
-     *         instead of the seamless same-client-world transition
+     * @return whether an ordered cache-rebase message was sent
      */
     public static synchronized boolean rebaseForDistantTeleport(
             ServerPlayerEntity player, CellPos targetCell) {
@@ -79,6 +88,8 @@ public final class CellPacketRouting {
             return false;
         }
 
+        player.networkHandler.sendPacket(new CustomPayloadS2CPacket(
+                new OriginRebasePayload(currentOrigin, targetCell)));
         ORIGINS.put(player, targetCell);
         Largerworld.logEntityInfo(
                 "Rebased client origin for {} from cell [{}, {}] to [{}, {}]",
@@ -87,7 +98,7 @@ public final class CellPacketRouting {
         return true;
     }
 
-    /** Returns whether a target cell needs a vanilla client-world reload. */
+    /** Returns whether a target cell needs a new connection origin. */
     public static synchronized boolean requiresOriginRebase(
             ServerPlayerEntity player, CellPos targetCell) {
         return requiresOriginRebase(origin(player), targetCell);
@@ -95,6 +106,60 @@ public final class CellPacketRouting {
 
     private static boolean requiresOriginRebase(CellPos currentOrigin, CellPos targetCell) {
         return !targetCell.isWithin(currentOrigin, MAX_CLIENT_CELL_DELTA);
+    }
+
+    public static CellPos inputOrigin(ServerPlayerEntity player) {
+        InputContext input = ACTIVE_INPUT.get();
+        return input != null && input.player() == player ? input.origin() : origin(player);
+    }
+
+    public static void applyInput(ServerPlayerEntity player, CellInputPayload payload) {
+        // Do not decode an arbitrarily old window through fixed-width position
+        // APIs after a long-distance teleport. Nearby pre-rebase input remains
+        // valid and is interpreted using its explicit original coordinate frame.
+        if (!CellInputPayload.isCoordinatePacket(payload.packet())
+                || !payload.origin().isWithin(origin(player), MAX_CLIENT_CELL_DELTA * 2 + 2)) {
+            return;
+        }
+        InputContext previous = ACTIVE_INPUT.get();
+        InputContext input = new InputContext(player, payload.origin());
+        INPUT_ORIGINS.put(payload.packet(), input);
+        ACTIVE_INPUT.set(input);
+        try {
+            payload.packet().apply(player.networkHandler);
+        } finally {
+            if (previous == null) {
+                ACTIVE_INPUT.remove();
+            } else {
+                ACTIVE_INPUT.set(previous);
+            }
+        }
+    }
+
+    /** Async text filtering may apply the original sign packet after a rebase. */
+    public static boolean withInputPacket(ServerPlayerEntity player, Packet<?> packet,
+                                          java.util.function.BooleanSupplier action) {
+        InputContext input = INPUT_ORIGINS.get(packet);
+        if (input == null || input.player() != player) {
+            return action.getAsBoolean();
+        }
+        if (!input.origin().isWithin(origin(player), MAX_CLIENT_CELL_DELTA * 2 + 2)) {
+            return true;
+        }
+        InputContext previous = ACTIVE_INPUT.get();
+        ACTIVE_INPUT.set(input);
+        try {
+            return action.getAsBoolean();
+        } finally {
+            if (previous == null) {
+                ACTIVE_INPUT.remove();
+            } else {
+                ACTIVE_INPUT.set(previous);
+            }
+        }
+    }
+
+    private record InputContext(ServerPlayerEntity player, CellPos origin) {
     }
 
     public static Packet<?> wrap(ServerPlayNetworkHandler handler, Packet<?> packet) {
@@ -107,7 +172,8 @@ public final class CellPacketRouting {
         if (packet instanceof CustomPayloadS2CPacket custom
                 && (custom.payload() instanceof CellPacketPayload
                 || custom.payload() instanceof EntityHandoffPayload
-                || custom.payload() instanceof ContinuousEntityHandoffPayload)) {
+                || custom.payload() instanceof ContinuousEntityHandoffPayload
+                || custom.payload() instanceof OriginRebasePayload)) {
             return packet;
         }
         // Bundle packets are synthetic transport containers and are not part of
@@ -135,7 +201,7 @@ public final class CellPacketRouting {
         }
         // After a distant-origin rebase, late packets from the abandoned client
         // window must not be translated through BlockPos/ChunkPos. They describe
-        // state that the respawn reload has already discarded and may exceed int.
+        // state that the cache rebase has already discarded and may exceed int.
         if (!isCellInsideClientWindow(source, origin(handler.player))) {
             return null;
         }
@@ -251,7 +317,7 @@ public final class CellPacketRouting {
      */
     public static double clientToLocalX(
             ServerPlayerEntity player, CellPos sourceCell, double clientX) {
-        return VirtualPosition.clientToLocalX(sourceCell, origin(player), clientX);
+        return VirtualPosition.clientToLocalX(sourceCell, inputOrigin(player), clientX);
     }
 
     /**
@@ -276,7 +342,7 @@ public final class CellPacketRouting {
     /** See {@link #clientToLocalX(ServerPlayerEntity, CellPos, double)}. */
     public static double clientToLocalZ(
             ServerPlayerEntity player, CellPos sourceCell, double clientZ) {
-        return VirtualPosition.clientToLocalZ(sourceCell, origin(player), clientZ);
+        return VirtualPosition.clientToLocalZ(sourceCell, inputOrigin(player), clientZ);
     }
 
     public static BlockPos clientToLocal(ServerPlayerEntity player, BlockPos clientPos) {

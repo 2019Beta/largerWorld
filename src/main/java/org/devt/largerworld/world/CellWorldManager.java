@@ -72,6 +72,7 @@ public final class CellWorldManager {
 
     public static synchronized ServerWorld getOrCreate(
             MinecraftServer server, RegistryKey<World> requestedKey) {
+        CellWorldKey.requireNetworkEncodable(requestedKey);
         MinecraftServerAccessor accessor = (MinecraftServerAccessor) server;
         Map<RegistryKey<World>, ServerWorld> worlds = accessor.largerworld$getWorldMap();
         ServerWorld existing = worlds.get(requestedKey);

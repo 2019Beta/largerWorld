@@ -46,6 +46,8 @@ public final class VirtualCoordinatesTest {
         distinguishesGlobalChunkTaskKeys();
         CellChunkTaskEngineChecks.run();
         CellWorldStateChecks.run();
+        LargeWorldLimitsChecks.run();
+        ContinuousNoiseCoordinatesChecks.run();
     }
 
     private static void remainsInsideCanonicalCell() {

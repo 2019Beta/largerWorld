@@ -183,6 +183,10 @@ public final class ClientEntityHandoff {
     }
 
     /** Replays committed passenger snapshots once vehicle and passengers exist. */
+    public static void clear() {
+        PENDING.clear();
+    }
+
     public static void tick(ClientPlayNetworkHandler handler) {
         prune();
         if (handler == null) {

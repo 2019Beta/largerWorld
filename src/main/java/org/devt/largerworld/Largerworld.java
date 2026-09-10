@@ -6,12 +6,17 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import org.devt.largerworld.command.LargerWorldCommands;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.network.CellPacketPayload;
 import org.devt.largerworld.network.ContinuousEntityHandoffPayload;
 import org.devt.largerworld.network.EntityHandoffPayload;
+import org.devt.largerworld.network.OriginRebasePayload;
+import org.devt.largerworld.network.CellInputPayload;
 import org.devt.largerworld.server.OriginShiftService;
 import org.devt.largerworld.server.CellViewTracker;
 import org.devt.largerworld.server.CellChunkTickets;
@@ -61,6 +66,16 @@ public class Largerworld implements ModInitializer {
         CellPacketPayload.register();
         EntityHandoffPayload.register();
         ContinuousEntityHandoffPayload.register();
+        OriginRebasePayload.register();
+        CellInputPayload.register();
+        ServerPlayNetworking.registerGlobalReceiver(CellInputPayload.ID,
+                (payload, context) -> context.server().execute(
+                        () -> CellPacketRouting.applyInput(context.player(), payload)));
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            if (!ServerPlayNetworking.canSend(handler.player, OriginRebasePayload.ID)) {
+                handler.disconnect(Text.literal("Please install the matching Larger World version on your client."));
+            }
+        });
         CellChunkTickets.register();
         LargerWorldCommands.register();
         ServerTickEvents.START_SERVER_TICK.register(OriginShiftService::reconcilePlayerWorlds);

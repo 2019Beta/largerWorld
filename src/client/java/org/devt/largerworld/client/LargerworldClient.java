@@ -4,6 +4,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
 import org.devt.largerworld.Largerworld;
@@ -15,8 +16,13 @@ import org.devt.largerworld.client.network.ClientEntityHandoff;
 import org.devt.largerworld.network.CellPacketPayload;
 import org.devt.largerworld.network.ContinuousEntityHandoffPayload;
 import org.devt.largerworld.network.EntityHandoffPayload;
+import org.devt.largerworld.network.OriginRebasePayload;
+import org.devt.largerworld.client.network.ClientOriginRebase;
 
 import java.util.Locale;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 
 public class LargerworldClient implements ClientModInitializer {
     private static final int PRIMARY_TEXT_COLOR = 0xFFFFFFFF;
@@ -30,6 +36,13 @@ public class LargerworldClient implements ClientModInitializer {
                 (payload, context) -> ClientEntityHandoff.accept(payload));
         ClientPlayNetworking.registerGlobalReceiver(ContinuousEntityHandoffPayload.ID,
                 (payload, context) -> ClientContinuousEntityHandoff.accept(payload));
+        ClientPlayNetworking.registerGlobalReceiver(OriginRebasePayload.ID,
+                (payload, context) -> ClientOriginRebase.apply(context.client(), payload));
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            ClientCellPacketContext.reset();
+            ClientEntityHandoff.clear();
+            ClientContinuousEntityHandoff.tick(null);
+        });
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             ClientContinuousEntityHandoff.tick(client.world);
             ClientEntityHandoff.tick(client.getNetworkHandler());
@@ -46,9 +59,11 @@ public class LargerworldClient implements ClientModInitializer {
                     VirtualPosition position = VirtualPosition.normalize(
                             ClientCellPacketContext.connectionOrigin(cell),
                             client.player.getX(), client.player.getY(), client.player.getZ());
-                    String global = "实际 XYZ: " + position.globalX(3) + " / "
-                            + String.format(Locale.ROOT, "%.3f", position.y()) + " / " + position.globalZ(3);
-                    String local = "Cell: [" + cell.x() + ", " + cell.z() + "]  Local XZ: "
+                    String global = "实际 XYZ: " + compactCoordinate(position.globalX()) + " / "
+                            + String.format(Locale.ROOT, "%.3f", position.y()) + " / "
+                            + compactCoordinate(position.globalZ());
+                    String local = "Cell: [" + compactCoordinate(new BigDecimal(cell.x())) + ", "
+                            + compactCoordinate(new BigDecimal(cell.z())) + "]  Local XZ: "
                             + String.format(Locale.ROOT, "%.3f / %.3f", position.localX(), position.localZ());
 
                     if (client.getDebugHud().shouldShowDebugHud()) {
@@ -69,5 +84,13 @@ public class LargerworldClient implements ClientModInitializer {
                     context.drawTextWithShadow(
                             client.textRenderer, local, panelX + 4, panelY + 13, SECONDARY_TEXT_COLOR);
                 });
+    }
+
+    private static String compactCoordinate(BigDecimal coordinate) {
+        if ((long) coordinate.precision() - coordinate.scale() <= 18) {
+            return coordinate.setScale(Math.max(0, Math.min(3, coordinate.scale())),
+                    RoundingMode.HALF_UP).toPlainString();
+        }
+        return coordinate.round(new MathContext(12)).toEngineeringString();
     }
 }

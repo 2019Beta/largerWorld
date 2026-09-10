@@ -290,7 +290,7 @@ public final class CellInteractionRouting {
 
     private static @Nullable BlockTarget blockTarget(
             MinecraftServer server, ServerPlayerEntity player, BlockPos clientPos) {
-        CellPos origin = CellPacketRouting.origin(player);
+        CellPos origin = CellPacketRouting.inputOrigin(player);
         CellPos current = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
         double playerClientX = player.getX()
                 + current.deltaXExact(origin)
@@ -322,7 +322,7 @@ public final class CellInteractionRouting {
     }
 
     private static Vec3d translateToCell(ServerPlayerEntity player, CellPos target, Vec3d clientPos) {
-        CellPos origin = CellPacketRouting.origin(player);
+        CellPos origin = CellPacketRouting.inputOrigin(player);
         return new Vec3d(
                 clientPos.x - target.deltaXExact(origin)
                         * (double) VirtualPosition.CELL_SIZE,
@@ -332,7 +332,7 @@ public final class CellInteractionRouting {
     }
 
     private static BlockPos clientPos(ServerPlayerEntity player, RemoteSignEditor remote) {
-        CellPos origin = CellPacketRouting.origin(player);
+        CellPos origin = CellPacketRouting.inputOrigin(player);
         CellPos source = CellWorldKey.cell(remote.world().getRegistryKey());
         return new BlockPos(
                 source.deltaX(origin).multiply(java.math.BigInteger.valueOf(VirtualPosition.CELL_SIZE))
