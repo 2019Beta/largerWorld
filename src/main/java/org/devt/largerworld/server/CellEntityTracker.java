@@ -2,10 +2,13 @@ package org.devt.largerworld.server;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.network.EntityTrackerEntry;
 
 /** Duck interface mixed into ServerChunkLoadingManager.EntityTracker. */
 public interface CellEntityTracker {
     Entity largerworld$getEntity();
+
+    EntityTrackerEntry largerworld$getEntry();
 
     /** Marks current listeners whose client entity must survive tracker replacement. */
     void largerworld$beginHandoffTracking();

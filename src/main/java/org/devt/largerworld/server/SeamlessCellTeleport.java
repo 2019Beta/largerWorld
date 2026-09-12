@@ -130,11 +130,16 @@ public final class SeamlessCellTeleport {
         Map<Entity, TransferState> sourceStates = new IdentityHashMap<>();
         Map<Entity, TransferState> targetStates = new IdentityHashMap<>();
         Map<Entity, Entity> vehicles = new IdentityHashMap<>();
+        Map<Entity, MinecartTrackerHandoff.State> minecartTracking = new IdentityHashMap<>();
         for (Entity member : members) {
             TransferState sourceState = TransferState.capture(member);
             sourceStates.put(member, sourceState);
             targetStates.put(member, sourceState.translated(
                     target.position().subtract(rootPosition)));
+            MinecartTrackerHandoff.State tracking = MinecartTrackerHandoff.capture(member);
+            if (tracking != null) {
+                minecartTracking.put(member, tracking);
+            }
             if (member.hasVehicle()) {
                 vehicles.put(member, member.getVehicle());
             }
@@ -149,7 +154,10 @@ public final class SeamlessCellTeleport {
             }
             CellPacketRouting.withSource(to, () -> {
                 for (Entity member : members) {
-                    register(member, to, targetStates.get(member));
+                    MinecartTrackerHandoff.register(
+                            member, to, minecartTracking.get(member),
+                            targetStates.get(member).position().subtract(sourceStates.get(member).position()),
+                            () -> register(member, to, targetStates.get(member)));
                     registered.add(member);
                 }
                 restoreRidingGraph(members, vehicles);
@@ -170,7 +178,7 @@ public final class SeamlessCellTeleport {
             Largerworld.LOGGER.error(
                     "In-place cell transfer failed for entity graph {}; restoring source world",
                     root.getUuid(), exception);
-            rollback(from, to, members, registered, sourceStates, vehicles);
+            rollback(from, to, members, registered, sourceStates, vehicles, minecartTracking);
             return null;
         }
     }
@@ -270,7 +278,8 @@ public final class SeamlessCellTeleport {
             List<Entity> members,
             List<Entity> registered,
             Map<Entity, TransferState> sourceStates,
-            Map<Entity, Entity> vehicles) {
+            Map<Entity, Entity> vehicles,
+            Map<Entity, MinecartTrackerHandoff.State> minecartTracking) {
         if (!registered.isEmpty()) {
             CellPacketRouting.withSource(to, () -> removeGraph(members));
         }
@@ -279,7 +288,9 @@ public final class SeamlessCellTeleport {
         }
         CellPacketRouting.withSource(from, () -> {
             for (Entity member : members) {
-                register(member, from, sourceStates.get(member));
+                MinecartTrackerHandoff.register(
+                        member, from, minecartTracking.get(member), Vec3d.ZERO,
+                        () -> register(member, from, sourceStates.get(member)));
             }
             restoreRidingGraph(members, vehicles);
         });

@@ -57,6 +57,10 @@ public final class OriginShiftService {
                 if (entity.isRemoved()) {
                     continue;
                 }
+                // iterateEntities includes tracked entities that are not ticking.
+                // Refresh here, not in ProjectileEntity.tick: a projectile which
+                // already reached a loading-only chunk must be able to resume.
+                CrossCellProjectileSimulation.refresh(entity);
                 Entity root = entity.getRootVehicle();
                 if (!handledRoots.add(root.getUuid())) {
                     continue;
@@ -91,6 +95,9 @@ public final class OriginShiftService {
                     continue;
                 }
                 shiftIfNeeded(root);
+                // The same object may now belong to the destination cell. Seed
+                // its moving simulation ticket immediately after handoff too.
+                CrossCellProjectileSimulation.refresh(root);
             }
         }
         LAST_RIDING_GRAPHS.keySet().retainAll(handledRoots);

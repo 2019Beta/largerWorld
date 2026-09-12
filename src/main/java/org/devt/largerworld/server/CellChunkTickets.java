@@ -10,6 +10,7 @@ import org.devt.largerworld.Largerworld;
 public final class CellChunkTickets {
     private static final long PREFETCH_EXPIRY_TICKS = 20L * 15L;
     private static final long HANDOFF_EXPIRY_TICKS = 20L * 5L;
+    private static final long PROJECTILE_EXPIRY_TICKS = 20L;
 
     public static final ChunkTicketType SHADOW = Registry.register(
             Registries.TICKET_TYPE,
@@ -36,6 +37,16 @@ public final class CellChunkTickets {
             Identifier.of(Largerworld.MOD_ID, "entity_handoff"),
             new ChunkTicketType(
                     HANDOFF_EXPIRY_TICKS,
+                    ChunkTicketType.FOR_LOADING
+                            | ChunkTicketType.FOR_SIMULATION
+                            | ChunkTicketType.RESETS_IDLE_TIMEOUT));
+
+    /** Refreshed along nearby cross-cell projectile flight; old chunks expire. */
+    public static final ChunkTicketType PROJECTILE = Registry.register(
+            Registries.TICKET_TYPE,
+            Identifier.of(Largerworld.MOD_ID, "projectile_simulation"),
+            new ChunkTicketType(
+                    PROJECTILE_EXPIRY_TICKS,
                     ChunkTicketType.FOR_LOADING
                             | ChunkTicketType.FOR_SIMULATION
                             | ChunkTicketType.RESETS_IDLE_TIMEOUT));

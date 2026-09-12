@@ -24,6 +24,11 @@ public abstract class EntityTrackerMixin implements CellEntityTracker {
     @Shadow private EntityTrackerEntry entry;
     @Shadow private Set<PlayerAssociatedNetworkHandler> listeners;
     @Shadow public abstract void updateTrackedStatus(ServerPlayerEntity player);
+
+    @Override
+    public EntityTrackerEntry largerworld$getEntry() {
+        return entry;
+    }
     /*
      * Do not rely solely on Mixin copying these field initializers into every
      * EntityTracker constructor. A constructor path used while a player joins

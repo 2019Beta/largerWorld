@@ -59,6 +59,20 @@ public abstract class EntitySpawnPacketHandlerMixin {
         boolean matchingExisting = existing != null
                 && existing.getUuid().equals(packet.getUuid())
                 && ClientEntityHandoff.shouldIgnoreSpawn(existing);
+        if (matchingExisting) {
+            // The destination tracker encodes subsequent relative movement
+            // against this spawn position. Retaining the client entity must
+            // still consume that baseline, otherwise each handoff can add an
+            // offset to its trajectory. Packet getters already map the source
+            // cell into client coordinates. Only update the network baseline:
+            // keep local momentum, passengers and in-flight interpolation.
+            Largerworld.logEntityInfo(
+                    "[cell-handoff-client] BASELINE id={} source={} previous={} target=({}, {}, {})",
+                    existing.getId(), ClientCellPacketContext.sourceCell(),
+                    existing.getTrackedPosition().getPos(),
+                    packet.getX(), packet.getY(), packet.getZ());
+            existing.updateTrackedPosition(packet.getX(), packet.getY(), packet.getZ());
+        }
         Largerworld.logEntityInfo(
                 "[cell-handoff-client] SPAWN type={} id={} uuid={} source={} existingUuid={} "
                         + "velocity={} identityState={} continuousState={} decision={}",
@@ -70,7 +84,8 @@ public abstract class EntitySpawnPacketHandlerMixin {
                         : matchingExisting ? "DROP" : "APPLY");
         if (consumedContinuousSpawn || matchingExisting) {
             // This spawn describes the seam position at the instant the server
-            // rebuilt the entity. A controlled vehicle ignores that duplicate;
+            // rebuilt the entity. A controlled vehicle consumes its network
+            // baseline above without replacing the object or visual trajectory;
             // other continuously moving entities have already consumed it into
             // the retained Java object above.
             ci.cancel();
