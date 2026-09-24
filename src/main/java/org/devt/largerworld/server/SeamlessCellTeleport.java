@@ -12,6 +12,7 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.TeleportTarget;
 import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.mixin.EntityAccessor;
+import org.devt.largerworld.mixin.ServerPlayNetworkHandlerAccessor;
 import org.devt.largerworld.mixin.TeleportTargetAccessor;
 
 import java.util.ArrayList;
@@ -51,6 +52,25 @@ public final class SeamlessCellTeleport {
 
     public static boolean isContinuousMovement() {
         return HANDOFF_MODE.get() == HandoffMode.CONTINUOUS;
+    }
+
+    /** Resets vanilla's ridden-vehicle validation baseline after a cell change. */
+    public static void synchronizeRiddenState(ServerPlayerEntity player) {
+        if (!player.hasVehicle()) {
+            return;
+        }
+        Entity vehicle = player.getRootVehicle();
+        ServerPlayNetworkHandlerAccessor handler =
+                (ServerPlayNetworkHandlerAccessor) player.networkHandler;
+        handler.largerworld$setTopmostRiddenEntity(vehicle);
+        handler.largerworld$setLastTickRiddenX(vehicle.getX());
+        handler.largerworld$setLastTickRiddenY(vehicle.getY());
+        handler.largerworld$setLastTickRiddenZ(vehicle.getZ());
+        handler.largerworld$setUpdatedRiddenX(vehicle.getX());
+        handler.largerworld$setUpdatedRiddenY(vehicle.getY());
+        handler.largerworld$setUpdatedRiddenZ(vehicle.getZ());
+        handler.largerworld$setVehicleFloating(false);
+        handler.largerworld$setVehicleFloatingTicks(0);
     }
 
     public static ServerPlayerEntity teleport(ServerPlayerEntity player, TeleportTarget target) {

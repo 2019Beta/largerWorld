@@ -1,23 +1,27 @@
 package org.devt.largerworld.server;
 
-import net.minecraft.entity.Entity;
 import net.minecraft.block.entity.SignBlockEntity;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.vehicle.AbstractMinecartEntity;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
 import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntityPassengersSetS2CPacket;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.filter.FilteredMessage;
 import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.network.ServerPlayerInteractionManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.screen.ScreenHandler;
-import net.minecraft.server.filter.FilteredMessage;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.TeleportTarget;
+import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.world.CellWorldKey;
@@ -27,6 +31,7 @@ import org.devt.largerworld.world.CellBoundaryAccess;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 import org.jspecify.annotations.Nullable;
@@ -122,14 +127,81 @@ public final class CellInteractionRouting {
         if (entity == null || !(entity.getEntityWorld() instanceof ServerWorld targetWorld)) {
             return false;
         }
+        ServerWorld originalWorld = handler.player.getEntityWorld();
         ScreenHandler previousScreen = handler.player.currentScreenHandler;
         runInWorld(handler.player, targetWorld, () -> handler.onPlayerInteractEntity(packet));
+        if (entity instanceof AbstractMinecartEntity) {
+            moveMinecartPassengerIntoCell(handler.player, originalWorld, entity);
+        }
         ScreenHandler openedScreen = handler.player.currentScreenHandler;
         if (openedScreen != previousScreen) {
             REMOTE_SCREEN_WORLDS.put(
                     handler.player.getUuid(), new RemoteScreen(targetWorld, openedScreen));
         }
         return true;
+    }
+
+    /**
+     * A shadow-cell interaction temporarily projects the player for vanilla's
+     * reach checks. If it mounts a minecart, make that cell change permanent so
+     * the vehicle and its passenger graph can cross the next seam together.
+     */
+    private static void moveMinecartPassengerIntoCell(
+            ServerPlayerEntity player, ServerWorld originalWorld, Entity minecart) {
+        if (!(minecart.getEntityWorld() instanceof ServerWorld targetWorld)
+                || targetWorld == originalWorld
+                || player.getEntityWorld() != originalWorld
+                || !player.hasVehicle()
+                || player.getRootVehicle() != minecart) {
+            return;
+        }
+
+        CellPos sourceCell = CellWorldKey.cell(originalWorld.getRegistryKey());
+        CellPos targetCell = CellWorldKey.cell(targetWorld.getRegistryKey());
+        if (!CellWorldKey.baseWorld(originalWorld.getRegistryKey())
+                .equals(CellWorldKey.baseWorld(targetWorld.getRegistryKey()))) {
+            return;
+        }
+
+        Vec3d targetPosition = new Vec3d(
+                player.getX() + sourceCell.deltaXExact(targetCell)
+                        * (double) VirtualPosition.CELL_SIZE,
+                player.getY(),
+                player.getZ() + sourceCell.deltaZExact(targetCell)
+                        * (double) VirtualPosition.CELL_SIZE);
+        CellPacketRouting.rebaseForDistantTeleport(player, targetCell);
+        CellViewTracker.prepareTransition(
+                targetWorld.getServer(), player, targetCell, targetPosition.x, targetPosition.z);
+
+        TeleportTarget target = new TeleportTarget(
+                targetWorld,
+                targetPosition,
+                player.getVelocity(),
+                player.getYaw(),
+                player.getPitch(),
+                false,
+                true,
+                Set.of(),
+                TeleportTarget.NO_OP);
+        CellPacketRouting.withSource(targetWorld, () -> {
+            SeamlessCellTeleport.withCellHandoff(true,
+                    () -> SeamlessCellTeleport.teleport(player, target));
+            player.setAttached(Largerworld.CELL_POS, targetCell);
+            CellWorldEnvironmentSync.sendCurrent(player, targetWorld);
+
+            EntityPassengersSetS2CPacket passengers =
+                    new EntityPassengersSetS2CPacket(minecart);
+            targetWorld.getChunkManager().sendToNearbyPlayers(minecart, passengers);
+            CellViewTracker.sendToShadowPlayers(
+                    targetWorld,
+                    null,
+                    minecart.getX(),
+                    minecart.getY(),
+                    minecart.getZ(),
+                    256.0,
+                    passengers);
+        });
+        SeamlessCellTeleport.synchronizeRiddenState(player);
     }
 
     public static boolean isRerouting() {

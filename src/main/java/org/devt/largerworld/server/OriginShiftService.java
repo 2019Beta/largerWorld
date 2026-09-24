@@ -17,7 +17,6 @@ import org.devt.largerworld.coordinate.VirtualPosition;
 import org.devt.largerworld.world.CellWorldKey;
 import org.devt.largerworld.world.CellWorldManager;
 import org.devt.largerworld.mixin.ServerChunkLoadingManagerAccessor;
-import org.devt.largerworld.mixin.ServerPlayNetworkHandlerAccessor;
 import org.devt.largerworld.network.ContinuousEntityHandoffPayload;
 import org.devt.largerworld.network.EntityHandoffPayload;
 
@@ -390,18 +389,7 @@ public final class OriginShiftService {
             if (!(member instanceof ServerPlayerEntity player) || !player.hasVehicle()) {
                 continue;
             }
-            Entity vehicle = player.getRootVehicle();
-            ServerPlayNetworkHandlerAccessor handler =
-                    (ServerPlayNetworkHandlerAccessor) player.networkHandler;
-            handler.largerworld$setTopmostRiddenEntity(vehicle);
-            handler.largerworld$setLastTickRiddenX(vehicle.getX());
-            handler.largerworld$setLastTickRiddenY(vehicle.getY());
-            handler.largerworld$setLastTickRiddenZ(vehicle.getZ());
-            handler.largerworld$setUpdatedRiddenX(vehicle.getX());
-            handler.largerworld$setUpdatedRiddenY(vehicle.getY());
-            handler.largerworld$setUpdatedRiddenZ(vehicle.getZ());
-            handler.largerworld$setVehicleFloating(false);
-            handler.largerworld$setVehicleFloatingTicks(0);
+            SeamlessCellTeleport.synchronizeRiddenState(player);
         }
 
         if (preserveClientIdentity) {

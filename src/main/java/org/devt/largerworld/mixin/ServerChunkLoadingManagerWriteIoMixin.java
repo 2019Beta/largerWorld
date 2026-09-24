@@ -4,11 +4,11 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.server.world.ChunkHolder;
 import net.minecraft.server.world.ServerChunkLoadingManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.WorldChunk;
 import org.devt.largerworld.server.CellChunkIoQueue;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -52,41 +52,24 @@ public abstract class ServerChunkLoadingManagerWriteIoMixin {
                 selected -> storage.set(pos, selected));
     }
 
-    @WrapMethod(method = "method_60440")
-    private void largerworld$waitForChunkWriteBeforeUnload(
-            ChunkHolder holder,
-            CompletableFuture<?> savingFuture,
-            long packedPos,
+    @WrapOperation(
+            method = "method_60440",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/server/world/ServerWorld;unloadEntities(Lnet/minecraft/world/chunk/WorldChunk;)V"))
+    private void largerworld$waitForChunkWriteBeforeEntityUnload(
+            ServerWorld serverWorld,
+            WorldChunk chunk,
             Operation<Void> original) {
-        largerworld$flushThenUnload(holder, savingFuture, packedPos, original);
-    }
-
-    private void largerworld$flushThenUnload(
-            ChunkHolder holder,
-            CompletableFuture<?> savingFuture,
-            long packedPos,
-            Operation<Void> original) {
-        if (holder.getSavingFuture() != savingFuture) {
-            original.call(holder, savingFuture, packedPos);
-            return;
-        }
-        Chunk chunk = holder.getLatest();
-        if (chunk == null) {
-            original.call(holder, savingFuture, packedPos);
-            return;
-        }
         ServerChunkLoadingManager manager = (ServerChunkLoadingManager) (Object) this;
-        boolean scheduled = ((ServerChunkLoadingManagerAccessor) manager)
-                .largerworld$saveChunk(chunk);
         CompletableFuture<Void> barrier = CellChunkIoQueue.barrier(
                 manager, chunk.getPos());
-        if (!scheduled && barrier.isDone()) {
-            original.call(holder, savingFuture, packedPos);
+        if (barrier.isDone()) {
+            original.call(serverWorld, chunk);
             return;
         }
-        barrier.whenComplete((ignored, error) -> world.getServer().execute(() ->
-                largerworld$flushThenUnload(
-                        holder, savingFuture, packedPos, original)));
+        barrier.whenComplete((ignored, error) -> world.getServer().execute(
+                () -> original.call(serverWorld, chunk)));
     }
 
     @WrapMethod(method = "save(Z)V")

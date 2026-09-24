@@ -1,5 +1,7 @@
 package org.devt.largerworld.mixin;
 
+import net.minecraft.entity.Entity;
+import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.VehicleMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
@@ -13,12 +15,14 @@ import net.minecraft.network.packet.c2s.play.UpdateCommandBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateJigsawC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSignC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateStructureBlockC2SPacket;
+import net.minecraft.network.packet.s2c.play.VehicleMoveS2CPacket;
 import net.minecraft.server.filter.FilteredMessage;
 import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.Vec3d;
 import org.devt.largerworld.server.CellPacketRouting;
 import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellViewTracker;
@@ -212,6 +216,21 @@ public abstract class ServerPlayNetworkHandlerMixin {
                 CellPacketRouting.clientToLocalX(player, vehicleCell, pos.x),
                 pos.y,
                 CellPacketRouting.clientToLocalZ(player, vehicleCell, pos.z));
+    }
+
+    @Redirect(
+            method = "onVehicleMove",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/server/network/ServerPlayNetworkHandler;sendPacket(Lnet/minecraft/network/packet/Packet;)V"))
+    private void largerworld$sendVehicleCorrectionFromVehicleCell(
+            ServerPlayNetworkHandler handler, Packet<?> packet) {
+        Entity vehicle = player.getRootVehicle();
+        if (packet instanceof VehicleMoveS2CPacket
+                && vehicle.getEntityWorld() instanceof ServerWorld vehicleWorld) {
+            CellPacketRouting.withSource(vehicleWorld, () -> handler.sendPacket(packet));
+        } else {
+            handler.sendPacket(packet);
+        }
     }
 
     @Redirect(
