@@ -61,11 +61,13 @@ public final class OriginShiftService {
                 // Refresh here, not in ProjectileEntity.tick: a projectile which
                 // already reached a loading-only chunk must be able to resume.
                 CrossCellProjectileSimulation.refresh(entity);
+                CrossCellMinecartSimulation.refresh(entity);
                 Entity root = entity.getRootVehicle();
                 if (!handledRoots.add(root.getUuid())) {
                     continue;
                 }
-                RidingGraphSnapshot graph = RidingGraphSnapshot.capture(root);
+                RidingGraphSnapshot graph = RidingGraphSnapshot.capture(
+                        root, LAST_RIDING_GRAPHS.get(root.getUuid()));
                 seenMembers.addAll(graph.members());
                 RidingGraphSnapshot previous = LAST_RIDING_GRAPHS.put(root.getUuid(), graph);
                 boolean membershipChanged = previous == null
@@ -98,6 +100,7 @@ public final class OriginShiftService {
                 // The same object may now belong to the destination cell. Seed
                 // its moving simulation ticket immediately after handoff too.
                 CrossCellProjectileSimulation.refresh(root);
+                CrossCellMinecartSimulation.refresh(root);
             }
         }
         LAST_RIDING_GRAPHS.keySet().retainAll(handledRoots);
@@ -130,6 +133,9 @@ public final class OriginShiftService {
     }
 
     public static boolean shiftIfNeeded(Entity root) {
+        if (!isOutsideCell(root)) {
+            return false;
+        }
         ServerWorld currentWorld = (ServerWorld) root.getEntityWorld();
         CellPos currentCell = CellWorldKey.cell(currentWorld.getRegistryKey());
         VirtualPosition normalized = VirtualPosition.normalize(
@@ -434,11 +440,13 @@ public final class OriginShiftService {
     }
 
     private static boolean isOutsideCell(Entity root) {
-        ServerWorld currentWorld = (ServerWorld) root.getEntityWorld();
-        CellPos currentCell = CellWorldKey.cell(currentWorld.getRegistryKey());
-        return !VirtualPosition.normalize(
-                currentCell, root.getX(), root.getY(), root.getZ())
-                .isInCell(currentCell);
+        double x = root.getX();
+        double z = root.getZ();
+        // Match VirtualPosition's half-open interval without allocating a
+        // normalized position for every stationary/interior entity each tick.
+        return !(x >= -VirtualPosition.HALF_CELL && x < VirtualPosition.HALF_CELL
+                && z >= -VirtualPosition.HALF_CELL && z < VirtualPosition.HALF_CELL
+                && Double.isFinite(root.getY()));
     }
 
     private static void sendClientHandoff(
@@ -514,7 +522,21 @@ public final class OriginShiftService {
                             + "source={} target={}",
                     phase, member.getType(), member.getId(), member.getUuid(),
                     sourceCell, targetCell);
-            sourceWorld.getChunkManager().sendToNearbyPlayers(member, packet);
+            // The source tracker can disappear as soon as the entity leaves
+            // its canonical chunk. Notify nearby source-world clients even if
+            // they no longer appear in that tracker's listener set.
+            sourceWorld.getServer().getPlayerManager().sendToAround(
+                    null, member.getX(), member.getY(), member.getZ(),
+                    256.0, sourceWorld.getRegistryKey(), packet);
+            // A shadow watch can temporarily outlive its tracker listener.
+            // Notify that view too, so a retained client cart cannot miss its
+            // timeout token. Duplicate markers are idempotent on the client.
+            double shadowX = Math.max(-VirtualPosition.HALF_CELL,
+                    Math.min(Math.nextDown((double) VirtualPosition.HALF_CELL), member.getX()));
+            double shadowZ = Math.max(-VirtualPosition.HALF_CELL,
+                    Math.min(Math.nextDown((double) VirtualPosition.HALF_CELL), member.getZ()));
+            CellViewTracker.sendToShadowPlayers(sourceWorld, null,
+                    shadowX, member.getY(), shadowZ, 256.0, packet);
         }
     }
 
@@ -564,7 +586,16 @@ public final class OriginShiftService {
     }
 
     private record RidingGraphSnapshot(Set<UUID> members, boolean containsPlayer) {
-        private static RidingGraphSnapshot capture(Entity root) {
+        private static RidingGraphSnapshot capture(Entity root, RidingGraphSnapshot previous) {
+            if (!root.hasPassengers()) {
+                if (previous != null && previous.members().size() == 1
+                        && previous.members().contains(root.getUuid())
+                        && previous.containsPlayer() == (root instanceof ServerPlayerEntity)) {
+                    return previous;
+                }
+                return new RidingGraphSnapshot(
+                        Set.of(root.getUuid()), root instanceof ServerPlayerEntity);
+            }
             Set<UUID> members = new HashSet<>();
             boolean containsPlayer = false;
             for (Entity member : root.streamSelfAndPassengers().toList()) {

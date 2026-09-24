@@ -91,6 +91,9 @@ public abstract class EntitySpawnPacketHandlerMixin {
             ci.cancel();
             return;
         }
+        // If the source object was already removed, vanilla creates the target
+        // entity. Mark that spawn as seen so the handoff timeout cannot remove it.
+        ClientContinuousEntityHandoff.observeTargetSpawn(packet);
     }
 
     @Inject(method = "onEntitiesDestroy", at = @At("HEAD"), cancellable = true)

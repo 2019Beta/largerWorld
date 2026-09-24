@@ -149,6 +149,16 @@ public final class ClientContinuousEntityHandoff {
         return true;
     }
 
+    /** Records a target spawn that vanilla will create because the source entity is gone. */
+    public static void observeTargetSpawn(EntitySpawnS2CPacket packet) {
+        Pending pending = validPending(packet.getEntityId(), null);
+        if (pending != null
+                && pending.uuid.equals(packet.getUuid())
+                && pending.targetCell.equals(ClientCellPacketContext.sourceCell())) {
+            pending.claimTargetSpawn();
+        }
+    }
+
     /** Drops a queued source update only after the target spawn was consumed. */
     public static boolean shouldIgnoreTrackerUpdate(Entity entity) {
         if (entity == null) {
@@ -178,7 +188,7 @@ public final class ClientContinuousEntityHandoff {
         return pending.targetSpawnConsumed ? "TARGET_CONSUMED" : "BEGIN";
     }
 
-    /** Removes an orphaned retained entity if its target spawn never arrives. */
+    /** Removes an orphaned source entity if its target spawn never arrives. */
     public static void tick(ClientWorld world) {
         if (world == null) {
             PENDING.clear();
@@ -195,6 +205,10 @@ public final class ClientContinuousEntityHandoff {
             if (!pending.targetSpawnConsumed
                     && entity != null
                     && pending.uuid.equals(entity.getUuid())) {
+                // The server normally retires source tracker listeners silently,
+                // so there is no source destroy packet to suppress. ABORT removes
+                // the token when the transfer fails; a successful transfer with
+                // no target spawn must not leave an unattackable client ghost.
                 Largerworld.LOGGER.warn(
                         "[continuous-handoff-client] TIMEOUT_REMOVE type={} id={} uuid={}",
                         entity.getType(), entity.getId(), entity.getUuid());

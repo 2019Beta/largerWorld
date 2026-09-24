@@ -8,7 +8,6 @@ import org.devt.largerworld.Largerworld;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.network.EntityHandoffPayload;
 
-import java.util.Arrays;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,7 +34,8 @@ public final class ClientEntityHandoff {
     }
 
     public static void accept(EntityHandoffPayload payload) {
-        prune();
+        // Expire the addressed token here; tick() prunes the full map once.
+        // Scanning every token for every marker makes a large handoff quadratic.
         if (payload.phase() == EntityHandoffPayload.Phase.BEGIN) {
             long expiresAtNanos = System.nanoTime() + TIMEOUT_NANOS;
             Pending pending = PENDING.compute(payload.entityId(), (ignored, existing) -> {
@@ -58,7 +58,9 @@ public final class ClientEntityHandoff {
         }
 
         Pending pending = PENDING.get(payload.entityId());
-        boolean accepted = pending != null && pending.matches(payload);
+        boolean accepted = pending != null
+                && pending.expiresAtNanos - System.nanoTime() >= 0L
+                && pending.matches(payload);
         if (accepted) {
             if (!pending.committed) {
                 pending.passengerReplayDelayTicks = 1;
@@ -164,12 +166,9 @@ public final class ClientEntityHandoff {
         // its handler removes every passenger and calls startRiding again.
         // Besides needless object churn, a prior detach leak makes that path
         // show the "press Shift to dismount" onboarding message a second time.
-        int[] currentPassengerIds = entity.getPassengerList().stream()
-                .mapToInt(Entity::getId)
-                .toArray();
         pending.targetTrackerSeen = true;
         pending.deferredPassengers = null;
-        return Arrays.equals(currentPassengerIds, passengerIds)
+        return passengersMatch(entity, passengerIds)
                 ? PassengerDecision.DROP
                 : PassengerDecision.APPLY;
     }
@@ -221,10 +220,7 @@ public final class ClientEntityHandoff {
                 continue;
             }
 
-            int[] currentPassengerIds = vehicle.getPassengerList().stream()
-                    .mapToInt(Entity::getId)
-                    .toArray();
-            if (Arrays.equals(currentPassengerIds, packet.getPassengerIds())) {
+            if (passengersMatch(vehicle, packet.getPassengerIds())) {
                 // The retained source graph is already the committed target
                 // graph. Replaying this unchanged packet would make vanilla
                 // remove every passenger and startRiding again. Besides object
@@ -251,6 +247,19 @@ public final class ClientEntityHandoff {
                 pending.replayingPassengers = false;
             }
         }
+    }
+
+    private static boolean passengersMatch(Entity vehicle, int[] passengerIds) {
+        var passengers = vehicle.getPassengerList();
+        if (passengers.size() != passengerIds.length) {
+            return false;
+        }
+        for (int i = 0; i < passengerIds.length; i++) {
+            if (passengers.get(i).getId() != passengerIds[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Pending validPending(Entity entity) {
