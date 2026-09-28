@@ -2,8 +2,10 @@ package org.devt.largerworld.server;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ChunkTicketType;
+import net.minecraft.server.world.OptionalChunk;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.chunk.WorldChunk;
 
 import java.util.Map;
 import java.util.Objects;
@@ -34,10 +36,23 @@ public final class CellChunkTaskEngine {
         return requestAccessible(world, localPos, CellChunkTickets.SHADOW);
     }
 
-    /** Starts an expiring vanilla accessible-chunk request for prediction. */
-    public static CompletableFuture<?> prefetchAccessible(
+    /**
+     * Refreshes prediction tickets without pumping the chunk graph per chunk.
+     * Prediction has no completion consumer; vanilla advances all these tickets
+     * together on its next world tick. Explicit landing preparation below still
+     * returns the authoritative completion future.
+     */
+    public static void prefetchAccessible(
             ServerWorld world, ChunkPos localPos) {
-        return requestAccessible(world, localPos, CellChunkTickets.PREFETCH);
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(localPos, "localPos");
+        Runnable refresh = () -> world.getChunkManager().addTicket(
+                CellChunkTickets.PREFETCH, localPos, 0);
+        if (world.getServer().isOnThread()) {
+            refresh.run();
+        } else {
+            world.getServer().execute(refresh);
+        }
     }
 
     /** Prepares the landing chunk using vanilla's authoritative future. */
@@ -57,8 +72,26 @@ public final class CellChunkTaskEngine {
         TaskPool<CellChunkTaskKey> tasks = SERVER_TASKS.computeIfAbsent(
                 world.getServer(), ignored -> new TaskPool<>());
         return tasks.request(key, () -> startOnServerThread(
-                world.getServer(), () -> world.getChunkManager().addChunkLoadingTicket(
-                        ticketType, localPos, 0)));
+                world.getServer(), () -> {
+                    var manager = world.getChunkManager();
+                    var holder = manager.chunkLoadingManager.getCurrentChunkHolder(localPos.toLong());
+                    if (holder != null && isReady(holder.getAccessibleFuture())) {
+                        // Retain/refresh ownership even when no loading is needed.
+                        // This avoids an immediate whole-manager graph update for
+                        // each already prepared chunk when shadow ownership flips.
+                        manager.addTicket(ticketType, localPos, 0);
+                        return holder.getAccessibleFuture();
+                    }
+                    return manager.addChunkLoadingTicket(ticketType, localPos, 0);
+                }));
+    }
+
+    static boolean isReady(CompletableFuture<OptionalChunk<WorldChunk>> future) {
+        if (!future.isDone() || future.isCompletedExceptionally()) {
+            return false;
+        }
+        OptionalChunk<WorldChunk> result = future.getNow(null);
+        return result != null && result.orElse(null) != null;
     }
 
     private static CompletableFuture<?> startOnServerThread(

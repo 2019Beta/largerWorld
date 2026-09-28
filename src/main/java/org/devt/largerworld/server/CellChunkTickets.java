@@ -12,6 +12,14 @@ public final class CellChunkTickets {
     private static final long HANDOFF_EXPIRY_TICKS = 20L * 5L;
     private static final long PROJECTILE_EXPIRY_TICKS = 20L;
     private static final long MINECART_EXPIRY_TICKS = 20L;
+    public static final ChunkTicketType SIMULATION = Registry.register(
+            Registries.TICKET_TYPE,
+            Identifier.of(Largerworld.MOD_ID, "cross_cell_simulation"),
+            new ChunkTicketType(
+                    ChunkTicketType.NO_EXPIRATION,
+                    ChunkTicketType.FOR_LOADING
+                            | ChunkTicketType.FOR_SIMULATION
+                            | ChunkTicketType.RESETS_IDLE_TIMEOUT));
 
     public static final ChunkTicketType SHADOW = Registry.register(
             Registries.TICKET_TYPE,

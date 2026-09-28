@@ -141,10 +141,20 @@ public final class SeamlessCellTeleport {
         ChunkPos landingChunk = new ChunkPos(
                 MathHelper.floor(target.position().x) >> 4,
                 MathHelper.floor(target.position().z) >> 4);
-        to.getChunkManager().addChunkLoadingTicket(
-                CellChunkTickets.ENTITY_HANDOFF,
-                landingChunk,
-                ENTITY_TICKING_TICKET_RADIUS);
+        var destinationChunks = to.getChunkManager();
+        var landingHolder = destinationChunks.chunkLoadingManager
+                .getCurrentChunkHolder(landingChunk.toLong());
+        if (landingHolder != null
+                && CellChunkTaskEngine.isReady(landingHolder.getEntityTickingFuture())) {
+            // Adjacent simulation normally prepared this chunk already. Keep
+            // its handoff ticket, but do not pump all pending chunk work again
+            // for every entity in a stream crossing the seam.
+            destinationChunks.addTicket(CellChunkTickets.ENTITY_HANDOFF,
+                    landingChunk, ENTITY_TICKING_TICKET_RADIUS);
+        } else {
+            destinationChunks.addChunkLoadingTicket(CellChunkTickets.ENTITY_HANDOFF,
+                    landingChunk, ENTITY_TICKING_TICKET_RADIUS);
+        }
 
         Vec3d rootPosition = root.getEntityPos();
         Map<Entity, TransferState> sourceStates = new IdentityHashMap<>();

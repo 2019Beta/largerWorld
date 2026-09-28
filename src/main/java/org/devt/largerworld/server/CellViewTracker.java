@@ -7,6 +7,7 @@ import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.UnloadChunkS2CPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
 import net.minecraft.network.packet.Packet;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.network.ChunkFilter;
@@ -17,6 +18,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.world.World;
 import org.devt.largerworld.coordinate.CellPos;
 import org.devt.largerworld.coordinate.VirtualChunkPos;
 import org.devt.largerworld.coordinate.VirtualPosition;
@@ -77,10 +79,42 @@ public final class CellViewTracker {
 
     /** Releases shadow listeners and per-player routing state immediately on disconnect. */
     public static void forget(ServerPlayerEntity player) {
+        CellSimulationTracker.forget(player);
         PlayerState state = STATES.remove(player.getUuid());
         if (state != null) {
             state.releaseAll();
         }
+        // A dimension transition may already have retired the view this tick.
+        CellInteractionRouting.forget(player);
+        CellPacketRouting.forget(player);
+    }
+
+    /** Retire the old client view before vanilla replaces it on dimension change/respawn. */
+    public static void resetForWorldChange(ServerPlayerEntity player) {
+        CellSimulationTracker.forget(player);
+        CellInteractionRouting.closeRemoteScreen(player);
+        PlayerState state = STATES.remove(player.getUuid());
+        if (state != null) {
+            // The connection origin stays valid until an explicit rebase. Dropping
+            // it here would reinterpret queued movement in a different frame.
+            state.releaseAll(false);
+        }
+        CellInteractionRouting.forget(player);
+    }
+
+    private static PlayerState stateFor(ServerPlayerEntity player) {
+        PlayerState state = STATES.get(player.getUuid());
+        RegistryKey<World> baseWorld = CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey());
+        if (state != null && (state.player != player || !state.baseWorld.equals(baseWorld))) {
+            state.releaseAll(false);
+            STATES.remove(player.getUuid());
+            state = null;
+        }
+        if (state == null) {
+            state = new PlayerState(player);
+            STATES.put(player.getUuid(), state);
+        }
+        return state;
     }
 
     /** Drops all strong world/player references after the owning server stops. */
@@ -90,8 +124,7 @@ public final class CellViewTracker {
     }
 
     private static void updatePlayer(MinecraftServer server, ServerPlayerEntity player) {
-        PlayerState state = STATES.computeIfAbsent(player.getUuid(), ignored -> new PlayerState(player));
-        state.player = player;
+        PlayerState state = stateFor(player);
         CellPos currentCell = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
         int centerX = MathHelper.floor(player.getX()) >> 4;
         int centerZ = MathHelper.floor(player.getZ()) >> 4;
@@ -151,8 +184,7 @@ public final class CellViewTracker {
             CellPos targetCell,
             double targetX,
             double targetZ) {
-        PlayerState state = STATES.computeIfAbsent(player.getUuid(), ignored -> new PlayerState(player));
-        state.player = player;
+        PlayerState state = stateFor(player);
         CellPos sourceCell = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
         int centerX = MathHelper.floor(targetX) >> 4;
         int centerZ = MathHelper.floor(targetZ) >> 4;
@@ -295,7 +327,10 @@ public final class CellViewTracker {
         List<ServerPlayerEntity> result = new ArrayList<>();
         for (PlayerState state : STATES.values()) {
             Watch watch = state.watches.get(key);
-            if (watch != null && watch.sent && state.player.networkHandler.isConnectionOpen()) {
+            if (watch != null && watch.world == world && watch.sent
+                    && state.baseWorld.equals(CellWorldKey.baseWorld(
+                            state.player.getEntityWorld().getRegistryKey()))
+                    && state.player.networkHandler.isConnectionOpen()) {
                 result.add(state.player);
             }
         }
@@ -378,7 +413,8 @@ public final class CellViewTracker {
     }
 
     private static final class PlayerState {
-        private ServerPlayerEntity player;
+        private final ServerPlayerEntity player;
+        private final RegistryKey<World> baseWorld;
         private final Map<VirtualChunkPos, Watch> watches = new HashMap<>();
         /**
          * Source-cell chunks that vanilla owns now but will become shadow chunks
@@ -402,9 +438,12 @@ public final class CellViewTracker {
         private List<VirtualChunkPos> orderedPreparedHandoffChunks = List.of();
         private @Nullable CellPos handoffSourceCell;
         private int handoffTicks;
+        /** Shared by new watches and retries during this player's update. */
+        private int remainingLoadStarts;
 
         private PlayerState(ServerPlayerEntity player) {
             this.player = player;
+            this.baseWorld = CellWorldKey.baseWorld(player.getEntityWorld().getRegistryKey());
         }
 
         private Set<VirtualChunkPos> desiredShadowChunks(
@@ -552,6 +591,10 @@ public final class CellViewTracker {
                 watch.retryDelayTicks--;
                 return;
             }
+            if (remainingLoadStarts == 0) {
+                return;
+            }
+            remainingLoadStarts--;
             // A holder may be replaced while its request completes, and an
             // exceptional/empty completion must not strand this Watch forever.
             // The task engine removes completed keys, so this starts a fresh
@@ -565,6 +608,7 @@ public final class CellViewTracker {
         private void updateWatches(
                 MinecraftServer server,
                 Set<VirtualChunkPos> desired) {
+            remainingLoadStarts = MAX_SHADOW_CHUNK_LOADS_STARTED_PER_TICK;
             if (desiredWindowChanged) {
                 for (VirtualChunkPos old : new ArrayList<>(watches.keySet())) {
                     if (!desired.contains(old)) {
@@ -576,14 +620,14 @@ public final class CellViewTracker {
             // Expanding a fresh chunk's generation dependencies is synchronous.
             // Bound new requests as well as packet delivery so an exact-seam
             // teleport cannot spend one giant tick constructing the whole view.
-            int started = 0;
             for (VirtualChunkPos wanted : orderedShadowChunks) {
                 if (watches.containsKey(wanted)) {
                     continue;
                 }
-                if (started++ >= MAX_SHADOW_CHUNK_LOADS_STARTED_PER_TICK) {
+                if (remainingLoadStarts == 0) {
                     break;
                 }
+                remainingLoadStarts--;
                 ensureWatch(server, wanted);
             }
             int sent = 0;
@@ -749,6 +793,10 @@ public final class CellViewTracker {
         }
 
         private void releaseAll() {
+            releaseAll(true);
+        }
+
+        private void releaseAll(boolean clearConnection) {
             for (CellEntityTracker tracker : trackedEntities) {
                 stopTracking(tracker, false);
             }
@@ -771,7 +819,9 @@ public final class CellViewTracker {
             desiredWindowChanged = false;
             clearHandoff();
             CellInteractionRouting.forget(player);
-            CellPacketRouting.forget(player);
+            if (clearConnection) {
+                CellPacketRouting.forget(player);
+            }
         }
 
         private void stopTracking(CellEntityTracker tracker, boolean handedToVanilla) {

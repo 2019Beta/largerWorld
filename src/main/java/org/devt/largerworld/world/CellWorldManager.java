@@ -24,6 +24,7 @@ import org.devt.largerworld.mixin.MinecraftServerAccessor;
 import org.devt.largerworld.mixin.ServerWorldWeatherAccessor;
 import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellChunkIoQueue;
+import org.devt.largerworld.server.CellSimulationTracker;
 import org.devt.largerworld.server.CellTickSchedulerRouting;
 import org.devt.largerworld.server.CellViewTracker;
 import org.devt.largerworld.server.CellWorldEnvironmentSync;
@@ -250,6 +251,7 @@ public final class CellWorldManager {
     private static boolean isExternallyActive(ServerWorld world) {
         return !world.getPlayers().isEmpty()
                 || CellViewTracker.isWorldWatched(world)
+                || CellSimulationTracker.isWorldInUse(world)
                 || CellInteractionRouting.isWorldInUse(world);
     }
 

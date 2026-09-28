@@ -107,16 +107,32 @@ while the enclosed vanilla packet is applied.
 ## Shadow tracking and updates
 
 For each player, the server computes the portion of the vanilla view circle that
-falls outside the current cell. Those neighbor chunks receive loading and
-simulation tickets, then their full chunk/light data and entity tracker listeners
+falls outside the current cell. Those neighbor chunks receive loading tickets,
+then their full chunk/light data and entity tracker listeners
 are attached to the same connection. Ownership is handed between shadow tracking
 and vanilla tracking when the player crosses a seam, without unloading the client
 chunk during that handoff.
 
-The shadow view window is cached by `(cell, centerChunk, viewDistance)` and is
-rebuilt only when one of those inputs changes. Shared shadow tickets use a
+The shadow view window is cached by `(cell, centerChunk, viewDistance)` within a
+player instance and base dimension. A real dimension change or respawn releases
+the old view before vanilla replaces the client world; same-dimension cell
+handoffs keep their existing retention behavior. Incremental update recipients
+must also match the exact backing `ServerWorld`, not just cell coordinates.
+Shared shadow tickets use a
 primitive local-chunk-key reference index per backing world, so multiple viewers
 retain one vanilla ticket without boxed-key churn or duplicate ticket removal.
+
+Simulation coverage is managed separately from view distance. Non-spectator
+players project the server simulation-distance square into neighboring cells;
+only canonical chunks in that coverage receive simulation tickets. Shared
+coverage keeps a ticket until its last player leaves, and simulation-owned worlds
+remain active during cell eviction checks. This allows scheduled block/fluid ticks
+and ordinary entities to continue across a seam without promoting the entire
+shadow view to simulation.
+
+Projectile entity collision tests project neighboring entities' bounding boxes
+into the ray's source coordinate frame. Hit positions stay in that source frame;
+the target entity itself is never temporarily repositioned.
 
 The translated packet groups include:
 

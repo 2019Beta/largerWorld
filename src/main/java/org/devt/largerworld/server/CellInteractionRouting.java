@@ -2,7 +2,6 @@ package org.devt.largerworld.server;
 
 import net.minecraft.block.entity.SignBlockEntity;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.vehicle.AbstractMinecartEntity;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
@@ -130,9 +129,7 @@ public final class CellInteractionRouting {
         ServerWorld originalWorld = handler.player.getEntityWorld();
         ScreenHandler previousScreen = handler.player.currentScreenHandler;
         runInWorld(handler.player, targetWorld, () -> handler.onPlayerInteractEntity(packet));
-        if (entity instanceof AbstractMinecartEntity) {
-            moveMinecartPassengerIntoCell(handler.player, originalWorld, entity);
-        }
+        moveRemotePassengerIntoCell(handler.player, originalWorld, targetWorld);
         ScreenHandler openedScreen = handler.player.currentScreenHandler;
         if (openedScreen != previousScreen) {
             REMOTE_SCREEN_WORLDS.put(
@@ -143,32 +140,33 @@ public final class CellInteractionRouting {
 
     /**
      * A shadow-cell interaction temporarily projects the player for vanilla's
-     * reach checks. If it mounts a minecart, make that cell change permanent so
-     * the vehicle and its passenger graph can cross the next seam together.
+     * reach checks. If that interaction mounted any entity, make the cell
+     * change permanent so the vehicle and its passenger graph remain in one
+     * world. Restricting this to minecarts left boats and rideable mobs with a
+     * passenger that still belonged to the source world until a later graph
+     * reconciliation, which rendered the player inside the block below.
      */
-    private static void moveMinecartPassengerIntoCell(
-            ServerPlayerEntity player, ServerWorld originalWorld, Entity minecart) {
-        if (!(minecart.getEntityWorld() instanceof ServerWorld targetWorld)
-                || targetWorld == originalWorld
+    private static void moveRemotePassengerIntoCell(
+            ServerPlayerEntity player, ServerWorld originalWorld, ServerWorld targetWorld) {
+        Entity vehicle = player.getVehicle();
+        if (targetWorld == originalWorld
                 || player.getEntityWorld() != originalWorld
-                || !player.hasVehicle()
-                || player.getRootVehicle() != minecart) {
+                || vehicle == null
+                || vehicle.getEntityWorld() != targetWorld
+                || player.getRootVehicle().getEntityWorld() != targetWorld) {
             return;
         }
 
-        CellPos sourceCell = CellWorldKey.cell(originalWorld.getRegistryKey());
         CellPos targetCell = CellWorldKey.cell(targetWorld.getRegistryKey());
         if (!CellWorldKey.baseWorld(originalWorld.getRegistryKey())
                 .equals(CellWorldKey.baseWorld(targetWorld.getRegistryKey()))) {
             return;
         }
 
-        Vec3d targetPosition = new Vec3d(
-                player.getX() + sourceCell.deltaXExact(targetCell)
-                        * (double) VirtualPosition.CELL_SIZE,
-                player.getY(),
-                player.getZ() + sourceCell.deltaZExact(targetCell)
-                        * (double) VirtualPosition.CELL_SIZE);
+        // runInWorld restored the pre-mount position after the interaction.
+        // Transfer the passenger to the direct vehicle's actual seat instead
+        // of leaving a cross-world riding edge for a later tick to repair.
+        Vec3d targetPosition = vehicle.getPassengerRidingPos(player);
         CellPacketRouting.rebaseForDistantTeleport(player, targetCell);
         CellViewTracker.prepareTransition(
                 targetWorld.getServer(), player, targetCell, targetPosition.x, targetPosition.z);
@@ -190,14 +188,14 @@ public final class CellInteractionRouting {
             CellWorldEnvironmentSync.sendCurrent(player, targetWorld);
 
             EntityPassengersSetS2CPacket passengers =
-                    new EntityPassengersSetS2CPacket(minecart);
-            targetWorld.getChunkManager().sendToNearbyPlayers(minecart, passengers);
+                    new EntityPassengersSetS2CPacket(vehicle);
+            targetWorld.getChunkManager().sendToNearbyPlayers(vehicle, passengers);
             CellViewTracker.sendToShadowPlayers(
                     targetWorld,
                     null,
-                    minecart.getX(),
-                    minecart.getY(),
-                    minecart.getZ(),
+                    vehicle.getX(),
+                    vehicle.getY(),
+                    vehicle.getZ(),
                     256.0,
                     passengers);
         });

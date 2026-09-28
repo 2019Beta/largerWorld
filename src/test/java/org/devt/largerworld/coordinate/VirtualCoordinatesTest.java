@@ -14,6 +14,8 @@ import org.devt.largerworld.world.WorldgenCoordinates;
 import org.devt.largerworld.world.CellWorldStateChecks;
 import org.devt.largerworld.server.CellChunkTaskKey;
 import org.devt.largerworld.server.CellChunkTaskEngineChecks;
+import org.devt.largerworld.server.CellSimulationTrackerChecks;
+import org.devt.largerworld.world.ProjectileBoundaryProjectionChecks;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -45,6 +47,8 @@ public final class VirtualCoordinatesTest {
         enforcesCellCreationLimits();
         distinguishesGlobalChunkTaskKeys();
         CellChunkTaskEngineChecks.run();
+        CellSimulationTrackerChecks.run();
+        ProjectileBoundaryProjectionChecks.run();
         CellWorldStateChecks.run();
         LargeWorldLimitsChecks.run();
         ContinuousNoiseCoordinatesChecks.run();

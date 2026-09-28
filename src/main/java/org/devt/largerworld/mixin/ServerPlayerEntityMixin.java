@@ -6,6 +6,7 @@ import net.minecraft.world.TeleportTarget;
 import org.devt.largerworld.server.SeamlessCellTeleport;
 import org.devt.largerworld.server.CellInteractionRouting;
 import org.devt.largerworld.server.CellPacketRouting;
+import org.devt.largerworld.server.CellViewTracker;
 import org.devt.largerworld.world.CellWorldKey;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -59,6 +60,8 @@ public abstract class ServerPlayerEntityMixin {
             CellPacketRouting.rebaseForDistantTeleport(
                     player, CellWorldKey.cell(target.world().getRegistryKey()));
             cir.setReturnValue(SeamlessCellTeleport.teleport(player, target));
+        } else {
+            CellViewTracker.resetForWorldChange(player);
         }
     }
 }

@@ -16,6 +16,7 @@
     "ChunkNoiseSamplerMixin",
     "ChunkRegionMixin",
     "CollisionViewMixin",
+    "ProjectileUtilBoundaryMixin",
     "DimensionTypeStorageMixin",
     "DensityNoiseMixin",
     "DensityShiftedNoiseMixin",

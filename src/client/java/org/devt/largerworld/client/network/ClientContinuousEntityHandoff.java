@@ -2,6 +2,8 @@ package org.devt.largerworld.client.network;
 
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.vehicle.AbstractMinecartEntity;
+import net.minecraft.entity.vehicle.DefaultMinecartController;
 import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
 import net.minecraft.util.math.Vec3d;
 import org.devt.largerworld.Largerworld;
@@ -19,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class ClientContinuousEntityHandoff {
     private static final long TIMEOUT_NANOS = 5_000_000_000L;
+    private static final double MINECART_RECONCILIATION_DISTANCE_SQUARED = 1.5 * 1.5;
     private static final Map<Integer, Pending> PENDING = new ConcurrentHashMap<>();
 
     private ClientContinuousEntityHandoff() {
@@ -101,6 +104,10 @@ public final class ClientContinuousEntityHandoff {
         float retainedPitch = existing.getPitch();
         float retainedLastYaw = existing.lastYaw;
         float retainedLastPitch = existing.lastPitch;
+        boolean retainedMinecartInterpolation =
+                existing instanceof AbstractMinecartEntity minecart
+                        && minecart.getController() instanceof DefaultMinecartController controller
+                        && controller.getInterpolator().isInterpolating();
 
         // Let the retained subtype consume all destination-specific spawn data.
         // The explicit velocity assignment also protects subclasses that do not
@@ -111,6 +118,32 @@ public final class ClientContinuousEntityHandoff {
         Vec3d authoritativePosition = new Vec3d(
                 existing.getX(), existing.getY(), existing.getZ());
         Vec3d reconciliationGap = authoritativePosition.subtract(retainedPosition);
+
+        if (existing instanceof AbstractMinecartEntity minecart
+                && minecart.getController() instanceof DefaultMinecartController controller
+                && (!retainedMinecartInterpolation
+                        || reconciliationGap.lengthSquared()
+                        > MINECART_RECONCILIATION_DISTANCE_SQUARED)) {
+            // A default cart does not advance itself on the client once its
+            // interpolator runs out. A freshly joined client may not have any
+            // source interpolation yet, even when the seam gap is small. In
+            // either that case or after a larger missed movement, keep the
+            // authoritative spawn position instead of restoring a trajectory
+            // which cannot advance until another tracker packet arrives.
+            controller.getInterpolator().clear();
+            existing.lastX = authoritativePosition.x;
+            existing.lastY = authoritativePosition.y;
+            existing.lastZ = authoritativePosition.z;
+            existing.lastRenderX = authoritativePosition.x;
+            existing.lastRenderY = authoritativePosition.y;
+            existing.lastRenderZ = authoritativePosition.z;
+            Largerworld.logEntityInfo(
+                    "[continuous-handoff-client] RECONCILE_MINECART id={} "
+                            + "sourceInterpolating={} gap={} position={}",
+                    existing.getId(), retainedMinecartInterpolation,
+                    reconciliationGap, authoritativePosition);
+            return true;
+        }
 
         // The destination spawn is normally one or more server ticks ahead of
         // the retained client trajectory. Applying it as the current position
