@@ -93,6 +93,7 @@ public abstract class EntitySpawnPacketHandlerMixin {
         }
         // If the source object was already removed, vanilla creates the target
         // entity. Mark that spawn as seen so the handoff timeout cannot remove it.
+        ClientEntityHandoff.observeTargetSpawn(packet);
         ClientContinuousEntityHandoff.observeTargetSpawn(packet);
     }
 

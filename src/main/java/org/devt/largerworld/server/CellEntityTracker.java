@@ -21,4 +21,7 @@ public interface CellEntityTracker {
     void largerworld$stopShadowTracking(ServerPlayerEntity player, boolean handedToVanilla);
 
     void largerworld$refreshTracking(ServerPlayerEntity player);
+
+    /** Ensures a rider receives the destination graph's tracker lifecycle. */
+    void largerworld$ensureGraphPlayerTracking(ServerPlayerEntity player);
 }

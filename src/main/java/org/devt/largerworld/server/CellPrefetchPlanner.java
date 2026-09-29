@@ -78,6 +78,21 @@ public final class CellPrefetchPlanner {
             CellChunkTaskEngine.prefetchAccessible(
                     target, new ChunkPos(virtual.localX(), virtual.localZ()));
         }
+
+        if (motionSource != player && motionSource.getEntityWorld() == sourceWorld) {
+            try {
+                ServerWorld target = CellWorldManager.getOrCreate(
+                        server, baseWorld, predictedCell);
+                // Loading-only prefetch does not prepare an entity-ticking
+                // landing chunk. Queue this ticket ahead of the vehicle's
+                // arrival so handoff need not pump the chunk graph on the seam.
+                target.getChunkManager().addTicket(
+                        CellChunkTickets.ENTITY_HANDOFF,
+                        new ChunkPos(entryChunkX, entryChunkZ), 2);
+            } catch (CellWorldManager.CellCapacityException ignored) {
+                // The handoff itself will report the same capacity limit.
+            }
+        }
     }
 
     static Prediction predict(

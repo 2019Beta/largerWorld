@@ -43,6 +43,7 @@ public final class OriginShiftService {
     }
 
     public static void tick(MinecraftServer server) {
+        synchronizeRidingPositions(server);
         CellPrefetchPlanner.tick(server);
 
         Set<UUID> handledRoots = new HashSet<>();
@@ -104,6 +105,28 @@ public final class OriginShiftService {
         }
         LAST_RIDING_GRAPHS.keySet().retainAll(handledRoots);
         LAST_MEMBER_ROOTS.keySet().retainAll(seenMembers);
+    }
+
+    private static void synchronizeRidingPositions(MinecraftServer server) {
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            if (!player.hasVehicle() || player.isRemoved()) {
+                continue;
+            }
+            Entity root = player.getRootVehicle();
+            if (root.getEntityWorld() != player.getEntityWorld() || root.isRemoved()) {
+                continue;
+            }
+            // A moving vehicle can be updated by its movement packet even when
+            // its passenger was not ticked. View and simulation tickets below
+            // must follow the seat, not the player's last on-foot position.
+            for (Entity member : root.streamSelfAndPassengers().toList()) {
+                Entity vehicle = member.getVehicle();
+                if (vehicle != null && vehicle.getEntityWorld() == member.getEntityWorld()
+                        && !member.isRemoved()) {
+                    vehicle.updatePassengerPosition(member);
+                }
+            }
+        }
     }
 
     public static void reconcilePlayerWorlds(MinecraftServer server) {
@@ -325,6 +348,9 @@ public final class OriginShiftService {
                     CellWorldEnvironmentSync.sendCurrent(player, targetWorld);
                 }
             }
+            if (preserveClientIdentity) {
+                ensureRiderTargetTracking(targetWorld, targetMembers);
+            }
         });
 
         // In-place cell moves keep references identical. UUID indexing also
@@ -425,6 +451,28 @@ public final class OriginShiftService {
                     passengers);
         }
         return true;
+    }
+
+    private static void ensureRiderTargetTracking(
+            ServerWorld world, List<Entity> members) {
+        var trackers = ((ServerChunkLoadingManagerAccessor)
+                world.getChunkManager().chunkLoadingManager)
+                .largerworld$getEntityTrackers();
+        for (Entity member : members) {
+            if (member instanceof ServerPlayerEntity) {
+                continue;
+            }
+            Object value = trackers.get(member.getId());
+            if (!(value instanceof CellEntityTracker tracker)
+                    || tracker.largerworld$getEntity() != member) {
+                continue;
+            }
+            for (Entity rider : members) {
+                if (rider instanceof ServerPlayerEntity player) {
+                    tracker.largerworld$ensureGraphPlayerTracking(player);
+                }
+            }
+        }
     }
 
     private static boolean isOutsideCell(Entity root) {

@@ -99,6 +99,16 @@ public final class ClientEntityHandoff {
         return true;
     }
 
+    /** Records a target spawn when vanilla must create a replacement entity. */
+    public static void observeTargetSpawn(
+            net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket packet) {
+        Pending pending = validPending(packet.getEntityId(), null);
+        if (pending != null && pending.uuid.equals(packet.getUuid())
+                && pending.targetCell.equals(ClientCellPacketContext.sourceCell())) {
+            pending.targetTrackerSeen = true;
+        }
+    }
+
     /** Drops stale source-tracker state once destination ownership is visible. */
     public static boolean shouldIgnoreTrackerUpdate(Entity entity) {
         Pending pending = validPending(entity);
@@ -161,12 +171,12 @@ public final class ClientEntityHandoff {
             return PassengerDecision.HOLD;
         }
 
-        // COMMIT, rather than a replacement spawn, establishes target tracker
-        // authority. Do not replay an unchanged final graph through vanilla:
+        // The final passenger relation does not prove that the destination
+        // entity tracker has started sending this vehicle. Do not replay an
+        // unchanged final graph through vanilla:
         // its handler removes every passenger and calls startRiding again.
         // Besides needless object churn, a prior detach leak makes that path
         // show the "press Shift to dismount" onboarding message a second time.
-        pending.targetTrackerSeen = true;
         pending.deferredPassengers = null;
         return passengersMatch(entity, passengerIds)
                 ? PassengerDecision.DROP
@@ -187,7 +197,7 @@ public final class ClientEntityHandoff {
     }
 
     public static void tick(ClientPlayNetworkHandler handler) {
-        prune();
+        prune(handler == null ? null : handler.getWorld());
         if (handler == null) {
             return;
         }
@@ -227,7 +237,6 @@ public final class ClientEntityHandoff {
                 // churn, that reinitializes local riding/camera state and can
                 // visibly reset the view depending on render timing.
                 pending.deferredPassengers = null;
-                pending.targetTrackerSeen = true;
                 Largerworld.logEntityInfo(
                         "[cell-handoff-client] PASSENGERS vehicle={} uuid={} "
                                 + "state=COMMITTED decision=DROP_UNCHANGED_REPLAY",
@@ -275,15 +284,40 @@ public final class ClientEntityHandoff {
             return null;
         }
         if (pending.expiresAtNanos - System.nanoTime() < 0L) {
-            PENDING.remove(entityId, pending);
             return null;
         }
         return entity == null || pending.uuid.equals(entity.getUuid()) ? pending : null;
     }
 
-    private static void prune() {
+    private static void prune(ClientWorld world) {
         long now = System.nanoTime();
-        PENDING.values().removeIf(pending -> pending.expiresAtNanos - now < 0L);
+        for (Map.Entry<Integer, Pending> entry : PENDING.entrySet()) {
+            Pending pending = entry.getValue();
+            if (pending.expiresAtNanos - now >= 0L) {
+                continue;
+            }
+            Entity entity = world == null ? null : world.getEntityById(entry.getKey());
+            Entity localPlayer = net.minecraft.client.MinecraftClient.getInstance().player;
+            if (pending.committed && !pending.targetTrackerSeen
+                    && entity != null && pending.uuid.equals(entity.getUuid())
+                    && localPlayer != null
+                    && (entity == localPlayer || entity.hasPassengerDeep(localPlayer))) {
+                // Keep the retained vehicle while the local player is still
+                // riding it. Recheck once the player dismounts.
+                continue;
+            }
+            if (!PENDING.remove(entry.getKey(), pending)) {
+                continue;
+            }
+            if (pending.committed && !pending.targetTrackerSeen
+                    && entity != null && pending.uuid.equals(entity.getUuid())
+                    && entity != localPlayer) {
+                Largerworld.LOGGER.warn(
+                        "[cell-handoff-client] TIMEOUT_REMOVE type={} id={} uuid={}",
+                        entity.getType(), entity.getId(), entity.getUuid());
+                world.removeEntity(entity.getId(), Entity.RemovalReason.DISCARDED);
+            }
+        }
     }
 
     private static final class Pending {

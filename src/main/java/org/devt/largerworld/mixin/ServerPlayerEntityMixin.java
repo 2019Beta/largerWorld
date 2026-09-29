@@ -1,6 +1,7 @@
 package org.devt.largerworld.mixin;
 
 import net.minecraft.block.entity.SignBlockEntity;
+import net.minecraft.entity.Entity;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.world.TeleportTarget;
 import org.devt.largerworld.server.SeamlessCellTeleport;
@@ -20,6 +21,21 @@ import net.minecraft.entity.player.PlayerEntity;
 
 @Mixin(ServerPlayerEntity.class)
 public abstract class ServerPlayerEntityMixin {
+
+    @Inject(method = "dismountVehicle", at = @At("HEAD"))
+    private void largerworld$syncPositionBeforeDismount(CallbackInfo ci) {
+        ServerPlayerEntity player = (ServerPlayerEntity) (Object) this;
+        Entity vehicle = player.getVehicle();
+        if (vehicle == null || SeamlessCellTeleport.isCellHandoff()
+                || vehicle.getEntityWorld() != player.getEntityWorld()) {
+            return;
+        }
+        // Riding movement updates the vehicle, while ordinary player movement
+        // packets are ignored. Anchor the server player to the current seat
+        // before the first on-foot packet is checked against its old position.
+        vehicle.updatePassengerPosition(player);
+        player.networkHandler.syncWithPlayerPosition();
+    }
 
     @Inject(method = "openEditSignScreen", at = @At("HEAD"))
     private void largerworld$rememberRemoteSignEditor(

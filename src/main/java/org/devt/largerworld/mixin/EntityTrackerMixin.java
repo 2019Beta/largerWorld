@@ -107,6 +107,13 @@ public abstract class EntityTrackerMixin implements CellEntityTracker {
         updateTrackedStatus(player);
     }
 
+    @Override
+    public void largerworld$ensureGraphPlayerTracking(ServerPlayerEntity player) {
+        if (listeners.add(player.networkHandler)) {
+            entry.startTracking(player);
+        }
+    }
+
     @Inject(
             method = "stopTracking(Lnet/minecraft/server/network/ServerPlayerEntity;)V",
             at = @At("HEAD"),

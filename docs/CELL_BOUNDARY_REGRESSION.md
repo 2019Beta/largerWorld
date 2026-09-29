@@ -31,7 +31,8 @@ Repeat seam checks on both axes, in both directions, and at a corner.
    and entity count before and after the patch. Measure warm (already generated)
    crossings separately from first-time terrain generation, in both directions
    and at a corner. Include standing near the seam for at least 15 seconds,
-   repeated vehicle crossings, a stream of entities, and two nearby players.
+   repeated horse/camel crossings, ridden and empty minecart crossings, a
+   stream of entities, and two nearby players.
    Record the crossing ticks' maximum/p95 MSPT, not just average FPS. Prediction
    should refresh tickets without calling `addChunkLoadingTicket` for every
    predicted chunk; already accessible shadow chunks and entity-ticking landing
@@ -39,6 +40,13 @@ Repeat seam checks on both axes, in both directions, and at a corner.
    still load, entities must keep ticking, and failed shadow loads must retry
    within the shared 16-start per-player tick budget. Source inspection confirms
    these paths; no runtime MSPT improvement has been measured yet.
+6. **Dismount after riding across a seam.** Mount a horse and a camel before
+   crossing, ride well into the adjacent cell, then press Shift. The player must
+   dismount beside the vehicle at its current position, without returning to
+   the mounting point. Repeat in both directions and after crossing more than
+   one seam; also check a boat or minecart and ordinary same-cell dismounting.
+   After leaving a minecart, verify that it keeps moving when powered and can
+   still be hit. Check again after five seconds for a stale client-only cart.
 
 The automated geometry/range checks are wired into the existing coordinate-test
 entry point for a later authorized test run; they were not executed for this patch.
