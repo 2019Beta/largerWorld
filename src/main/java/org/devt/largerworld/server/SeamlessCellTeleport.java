@@ -27,6 +27,7 @@ public final class SeamlessCellTeleport {
     private static final int ENTITY_TICKING_TICKET_RADIUS = 2;
     private static final ThreadLocal<HandoffMode> HANDOFF_MODE =
             ThreadLocal.withInitial(() -> HandoffMode.NONE);
+    private static final ThreadLocal<Entity> GRAPH_REMOVAL = new ThreadLocal<>();
 
     private SeamlessCellTeleport() {
     }
@@ -52,6 +53,12 @@ public final class SeamlessCellTeleport {
 
     public static boolean isContinuousMovement() {
         return HANDOFF_MODE.get() == HandoffMode.CONTINUOUS;
+    }
+
+    /** Only the entity currently unregistered by an in-place graph transfer. */
+    public static boolean preservesPassengersDuringRemoval(Entity entity) {
+        return GRAPH_REMOVAL.get() == entity
+                && entity.getRemovalReason() == Entity.RemovalReason.CHANGED_DIMENSION;
     }
 
     /** Resets vanilla's ridden-vehicle validation baseline after a cell change. */
@@ -255,12 +262,24 @@ public final class SeamlessCellTeleport {
     }
 
     private static void removeGraph(List<Entity> members) {
-        // Remove leaves first. When each parent later detaches its passengers,
-        // their CHANGED_DIMENSION marker suppresses synthetic dismount events.
+        // Unregister leaves first, retaining both sides of every riding relation.
+        // setRemoved still runs its world/tracker cleanup and removal callbacks;
+        // only its passenger detachment is suppressed for this exact entity.
+        // Use the same scope during rollback so a failed transfer stays mounted.
         for (int index = members.size() - 1; index >= 0; index--) {
             Entity member = members.get(index);
             if (!member.isRemoved()) {
-                member.remove(Entity.RemovalReason.CHANGED_DIMENSION);
+                Entity previous = GRAPH_REMOVAL.get();
+                GRAPH_REMOVAL.set(member);
+                try {
+                    member.remove(Entity.RemovalReason.CHANGED_DIMENSION);
+                } finally {
+                    if (previous == null) {
+                        GRAPH_REMOVAL.remove();
+                    } else {
+                        GRAPH_REMOVAL.set(previous);
+                    }
+                }
             }
         }
     }
@@ -269,6 +288,12 @@ public final class SeamlessCellTeleport {
             List<Entity> members, Map<Entity, Entity> vehicles) {
         for (Entity passenger : members) {
             Entity vehicle = vehicles.get(passenger);
+            if (vehicle != null && passenger.getVehicle() == vehicle
+                    && vehicle.getPassengerList().contains(passenger)) {
+                // Already retained: vanilla startRiding rejects an unchanged
+                // vehicle. Do not detach and remount just to restore this edge.
+                continue;
+            }
             if (vehicle != null && !passenger.startRiding(vehicle, true, false)) {
                 throw new IllegalStateException(
                         "Could not restore passenger " + passenger.getUuid()

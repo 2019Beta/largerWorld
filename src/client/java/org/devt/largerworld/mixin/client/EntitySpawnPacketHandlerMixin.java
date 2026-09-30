@@ -130,6 +130,9 @@ public abstract class EntitySpawnPacketHandlerMixin {
             if (ignore) {
                 filtered = true;
             } else {
+                ClientEntityHandoff.forget(entityId);
+                ClientContinuousEntityHandoff.forget(entityId);
+                largerworld$pendingPassengers.remove(entityId);
                 remaining.add(entityId);
             }
         }
@@ -310,6 +313,9 @@ public abstract class EntitySpawnPacketHandlerMixin {
     @Inject(method = "onEntityTrackerUpdate", at = @At("RETURN"))
     private void largerworld$logTrackedDataAfterVanilla(
             EntityTrackerUpdateS2CPacket packet, CallbackInfo ci) {
+        if (!Largerworld.isEntityInfoLoggingEnabled()) {
+            return;
+        }
         ClientWorld world = largerworld$worldOnClientThread();
         Entity entity = world == null ? null : world.getEntityById(packet.id());
         if (entity instanceof CamelEntity camel
@@ -404,6 +410,9 @@ public abstract class EntitySpawnPacketHandlerMixin {
             String phase,
             CamelEntity camel,
             List<DataTracker.SerializedEntry<?>> entries) {
+        if (!Largerworld.isEntityInfoLoggingEnabled()) {
+            return;
+        }
         Object incomingLastPose = entries.stream()
                 .filter(entry -> entry.id() == CamelEntity.LAST_POSE_TICK.id())
                 .map(DataTracker.SerializedEntry::value)

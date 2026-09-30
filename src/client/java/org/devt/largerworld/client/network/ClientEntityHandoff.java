@@ -37,6 +37,7 @@ public final class ClientEntityHandoff {
         // Expire the addressed token here; tick() prunes the full map once.
         // Scanning every token for every marker makes a large handoff quadratic.
         if (payload.phase() == EntityHandoffPayload.Phase.BEGIN) {
+            ClientContinuousEntityHandoff.forget(payload.entityId());
             long expiresAtNanos = System.nanoTime() + TIMEOUT_NANOS;
             Pending pending = PENDING.compute(payload.entityId(), (ignored, existing) -> {
                 if (existing != null
@@ -83,6 +84,10 @@ public final class ClientEntityHandoff {
         // Do not retire the token here. More than one source-side listener can
         // converge after the target graph has already committed.
         return true;
+    }
+
+    public static void forget(int entityId) {
+        PENDING.remove(entityId);
     }
 
     /** Ignores only the replacement spawn produced by the destination tracker. */

@@ -16,11 +16,26 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.List;
+
 /** Preserves continuous identity and per-entity momentum during a cell handoff. */
 @Mixin(Entity.class)
 public abstract class EntityTeleportMixin {
     @Shadow
     protected abstract void removeFromDimension();
+
+    @Redirect(
+            method = "setRemoved",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/entity/Entity;getPassengerList()Ljava/util/List;"))
+    private List<Entity> largerworld$retainTransferredPassengers(Entity entity) {
+        // An in-place cell move changes world registration, not mount lifecycle.
+        // Do not expose its passengers to setRemoved's stopRiding loop. All other
+        // removals, including real dimension teleports, keep vanilla detachment.
+        return SeamlessCellTeleport.preservesPassengersDuringRemoval(entity)
+                ? List.of() : entity.getPassengerList();
+    }
 
     @Inject(method = "copyFrom", at = @At("RETURN"))
     private void largerworld$copyContinuousState(Entity original, CallbackInfo ci) {

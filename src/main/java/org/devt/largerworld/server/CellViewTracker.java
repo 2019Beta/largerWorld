@@ -28,6 +28,7 @@ import org.devt.largerworld.world.CellWorldManager;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -64,7 +65,20 @@ public final class CellViewTracker {
         Set<UUID> online = new HashSet<>();
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
             online.add(player.getUuid());
-            updatePlayer(server, player);
+            updatePlayerWatches(server, player);
+        }
+
+        // Chunk requests above can create trackers synchronously. Build the
+        // index only after all players have updated their watches, then share
+        // it across their entity reconciliation in this tick.
+        Map<ServerWorld, Map<Long, List<CellEntityTracker>>> trackersByWorld =
+                new IdentityHashMap<>();
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            PlayerState state = STATES.get(player.getUuid());
+            if (state != null) {
+                state.updateEntities(trackersByWorld);
+                state.tickHandoff();
+            }
         }
 
         for (UUID uuid : new ArrayList<>(STATES.keySet())) {
@@ -123,7 +137,7 @@ public final class CellViewTracker {
         SHADOW_TICKET_REFS.clear();
     }
 
-    private static void updatePlayer(MinecraftServer server, ServerPlayerEntity player) {
+    private static void updatePlayerWatches(MinecraftServer server, ServerPlayerEntity player) {
         PlayerState state = stateFor(player);
         CellPos currentCell = CellWorldKey.cell(player.getEntityWorld().getRegistryKey());
         int centerX = MathHelper.floor(player.getX()) >> 4;
@@ -134,8 +148,18 @@ public final class CellViewTracker {
 
         state.prepareFutureHandoff(currentCell, centerX, centerZ, radius, desired);
         state.updateWatches(server, desired);
-        state.updateEntities();
-        state.tickHandoff();
+    }
+
+    private static Map<Long, List<CellEntityTracker>> indexTrackers(ServerWorld world) {
+        Map<Long, List<CellEntityTracker>> byChunk = new HashMap<>();
+        Int2ObjectMap<?> trackers = ((ServerChunkLoadingManagerAccessor)
+                world.getChunkManager().chunkLoadingManager).largerworld$getEntityTrackers();
+        for (Object value : trackers.values()) {
+            CellEntityTracker tracker = (CellEntityTracker) value;
+            long chunk = tracker.largerworld$getEntity().getChunkPos().toLong();
+            byChunk.computeIfAbsent(chunk, ignored -> new ArrayList<>()).add(tracker);
+        }
+        return byChunk;
     }
 
     private static Set<VirtualChunkPos> desiredShadowChunks(
@@ -424,7 +448,11 @@ public final class CellViewTracker {
          */
         private final Map<VirtualChunkPos, Watch> preparedHandoffWatches =
                 new HashMap<>();
-        private final Set<CellEntityTracker> trackedEntities = new HashSet<>();
+        // Vanilla trackers compare by entity id. Cell transfers preserve that
+        // id but replace the tracker and its listener set, so ownership must
+        // follow the tracker instance rather than EntityTracker.equals().
+        private final Set<CellEntityTracker> trackedEntities =
+                Collections.newSetFromMap(new IdentityHashMap<>());
         private final Set<VirtualChunkPos> pendingHandoffChunks = new HashSet<>();
         private final Set<VirtualChunkPos> retainedHandoffChunks = new HashSet<>();
         /** Cached spatial window; rebuilt only when its chunk-space inputs change. */
@@ -735,25 +763,28 @@ public final class CellViewTracker {
         }
 
         private void updateEntities() {
-            Set<CellEntityTracker> desired = new HashSet<>();
-            Map<ServerWorld, Set<Long>> byWorld = new HashMap<>();
-            for (Watch watch : watches.values()) {
-                if (watch.sent) {
-                    byWorld.computeIfAbsent(watch.world, ignored -> new HashSet<>()).add(watch.localPos.toLong());
-                }
+            updateEntities(new IdentityHashMap<>());
+        }
+
+        private void updateEntities(
+                Map<ServerWorld, Map<Long, List<CellEntityTracker>>> trackersByWorld) {
+            if (watches.isEmpty() && trackedEntities.isEmpty()) {
+                return;
             }
-            for (Map.Entry<ServerWorld, Set<Long>> entry : byWorld.entrySet()) {
-                ServerWorld world = entry.getKey();
-                Int2ObjectMap<?> trackers = ((ServerChunkLoadingManagerAccessor)
-                        world.getChunkManager().chunkLoadingManager).largerworld$getEntityTrackers();
-                for (Object value : trackers.values()) {
-                    CellEntityTracker tracker = (CellEntityTracker) value;
-                    Entity entity = tracker.largerworld$getEntity();
-                    if (entity != player && entry.getValue().contains(entity.getChunkPos().toLong())) {
-                        desired.add(tracker);
-                        if (!trackedEntities.contains(tracker)) {
-                            CellPacketRouting.withSource(world, () -> tracker.largerworld$startShadowTracking(player));
-                        }
+            Set<CellEntityTracker> desired =
+                    Collections.newSetFromMap(new IdentityHashMap<>());
+            for (Watch watch : watches.values()) {
+                if (!watch.sent) {
+                    continue;
+                }
+                Map<Long, List<CellEntityTracker>> byChunk = trackersByWorld.computeIfAbsent(
+                        watch.world, CellViewTracker::indexTrackers);
+                for (CellEntityTracker tracker : byChunk.getOrDefault(
+                        watch.localPos.toLong(), List.of())) {
+                    if (tracker.largerworld$getEntity() != player && desired.add(tracker)
+                            && !trackedEntities.contains(tracker)) {
+                        CellPacketRouting.withSource(watch.world,
+                                () -> tracker.largerworld$startShadowTracking(player));
                     }
                 }
             }

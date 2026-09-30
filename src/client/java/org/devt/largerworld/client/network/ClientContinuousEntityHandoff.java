@@ -41,6 +41,9 @@ public final class ClientContinuousEntityHandoff {
             return;
         }
 
+        // A cart can cross empty, pick up a player, then cross back within the
+        // grace window. Only the newest handoff mode may filter its packets.
+        ClientEntityHandoff.forget(payload.entityId());
         long now = System.nanoTime();
         long expiresAtNanos = now + TIMEOUT_NANOS;
         Pending pending = PENDING.compute(payload.entityId(), (ignored, existing) -> {
@@ -67,6 +70,10 @@ public final class ClientContinuousEntityHandoff {
                 && pending.sourceCell.equals(ClientCellPacketContext.sourceCell());
     }
 
+    public static void forget(int entityId) {
+        PENDING.remove(entityId);
+    }
+
     /**
      * Applies a destination spawn to the retained object and returns whether
      * vanilla entity creation must be cancelled.
@@ -84,6 +91,10 @@ public final class ClientContinuousEntityHandoff {
             return false;
         }
         if (!pending.claimTargetSpawn()) {
+            // A listener can be re-established during the grace window. Its
+            // spawn carries the baseline for subsequent relative movement even
+            // though the entity object and visual interpolation stay alive.
+            existing.updateTrackedPosition(packet.getX(), packet.getY(), packet.getZ());
             Largerworld.logEntityInfo(
                     "[continuous-handoff-client] SPAWN phase=DUPLICATE_DROP type={} "
                             + "id={} uuid={} source={} target={}",

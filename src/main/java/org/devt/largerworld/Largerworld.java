@@ -44,6 +44,10 @@ public class Largerworld implements ModInitializer {
     private static final boolean ENTITY_INFO_LOGGING =
             Boolean.getBoolean("largerworld.entityInfoLogging");
 
+    public static boolean isEntityInfoLoggingEnabled() {
+        return ENTITY_INFO_LOGGING;
+    }
+
     public static void logEntityInfo(String message, Object... arguments) {
         if (ENTITY_INFO_LOGGING) {
             LOGGER.info(message, arguments);

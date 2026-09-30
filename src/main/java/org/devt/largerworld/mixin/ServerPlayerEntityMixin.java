@@ -18,9 +18,52 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import net.minecraft.server.network.ServerPlayerInteractionManager;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.EntityPosition;
+import net.minecraft.network.packet.s2c.play.PositionFlag;
+import net.minecraft.network.packet.Packet;
+import net.minecraft.server.network.ServerPlayNetworkHandler;
+
+import java.util.Set;
 
 @Mixin(ServerPlayerEntity.class)
 public abstract class ServerPlayerEntityMixin {
+
+    @Redirect(
+            method = "dismountVehicle",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/server/network/ServerPlayNetworkHandler;sendPacket(Lnet/minecraft/network/packet/Packet;)V",
+                    ordinal = 1))
+    private void largerworld$skipTransientGraphDismount(
+            ServerPlayNetworkHandler handler, Packet<?> packet) {
+        ServerPlayerEntity player = (ServerPlayerEntity) (Object) this;
+        if (SeamlessCellTeleport.isCellHandoff()
+                && player.getRemovalReason() == Entity.RemovalReason.CHANGED_DIMENSION) {
+            // Entity.setRemoved detaches children while moving the same riding
+            // graph to another cell. The old vehicle is restored immediately;
+            // sending this temporary empty passenger list would dismount the
+            // client before the target relation arrives.
+            return;
+        }
+        handler.sendPacket(packet);
+    }
+
+    @Redirect(
+            method = "startRiding",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/server/network/ServerPlayNetworkHandler;requestTeleport(Lnet/minecraft/entity/EntityPosition;Ljava/util/Set;)V"))
+    private void largerworld$deferCellMountTeleport(
+            ServerPlayNetworkHandler handler, EntityPosition position, Set<PositionFlag> flags) {
+        if (CellInteractionRouting.isRerouting()
+                || SeamlessCellTeleport.isContinuousMovement()) {
+            // Remote interactions still use a temporary world projection here;
+            // graph restoration also calls startRiding during a seamless move.
+            // The passenger packet attaches the client to its retained vehicle.
+            // Do not first teleport it to the server's newer seat snapshot or
+            // leave a pending teleport acknowledgement in the temporary frame.
+            return;
+        }
+        handler.requestTeleport(position, flags);
+    }
 
     @Inject(method = "dismountVehicle", at = @At("HEAD"))
     private void largerworld$syncPositionBeforeDismount(CallbackInfo ci) {
