@@ -74,7 +74,7 @@ tasks.named("check") {
 }
 
 // The custom checks live in main-method entry points and are run by coordinateTest.
-// Gradle 9.5 otherwise fails the conventional test task when it discovers no
+// Gradle otherwise fails the conventional test task when it discovers no
 // JUnit/TestNG tests in this source set.
 tasks.named("test", Test) {
     failOnNoDiscoveredTests = false
@@ -93,7 +93,7 @@ processResources {
     }
 }
 
-def targetJavaVersion = 21
+def targetJavaVersion = 25
 tasks.withType(JavaCompile).configureEach {
     // ensure that the encoding is set to UTF-8, no matter what the system default is
     // this fixes some edge cases with special characters not displaying correctly
@@ -106,10 +106,7 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 java {
-    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
-    if (JavaVersion.current() < javaVersion) {
-        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
-    }
+    toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
     // if it is present.
     // If you remove this line, sources will not be generated.
